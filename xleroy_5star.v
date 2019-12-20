@@ -3,11 +3,45 @@ From Coq Require Import Strings.String.
 From Coq Require Import Bool.Bool.
 From Coq Require Import Arith.Arith.
 From Coq Require Import Lists.List.
+Require Import Sequences.
 (*From Coq Require Import Arith.EqNat.*)
 (*From Coq Require Import omega.Omega.*)
 (*From Coq Require Import Init.Nat.*)
-(*Import ListNotations.*)
+Import ListNotations.
 
+
+
+Reserved Notation "c1 '/' st '\\' st'"
+                  (at level 40, st at level 39).
+
+Inductive ceval : com -> state -> state -> Prop :=
+  | E_Skip : forall st,
+      SKIP / st \\ st
+  | E_Ass  : forall st a1 n x,
+      aeval st a1 = n ->
+      (x ::= a1) / st \\ (t_update st x n)
+  | E_Seq : forall c1 c2 st st' st'',
+      c1 / st  \\ st' ->
+      c2 / st' \\ st'' ->
+      (c1 ;; c2) / st \\ st''
+  | E_IfTrue : forall st st' b c1 c2,
+      beval st b = true ->
+      c1 / st \\ st' ->
+      (IFB b THEN c1 ELSE c2 FI) / st \\ st'
+  | E_IfFalse : forall st st' b c1 c2,
+      beval st b = false ->
+      c2 / st \\ st' ->
+      (IFB b THEN c1 ELSE c2 FI) / st \\ st'
+  | E_WhileFalse : forall b st c,
+      beval st b = false ->
+      (WHILE b DO c END) / st \\ st
+  | E_WhileTrue : forall st st' st'' b c,
+      beval st b = true ->
+      c / st \\ st' ->
+      (WHILE b DO c END) / st' \\ st'' ->
+      (WHILE b DO c END) / st \\ st''
+
+  where "c1 '/' st '\\' st'" := (ceval c1 st st').
 (* ===================== *)
 Inductive id : Type :=
   | Id : string -> id.
@@ -180,10 +214,10 @@ Inductive transition (C: code): configuration -> configuration -> Prop :=
 
 Definition varlist := list string.
 
-Fixpoint find (var : string) (vlist : varlist) : option nat :=
+Fixpoint find (var : id) (vlist : varlist) : option nat :=
   match vlist with
   | nil => None
-  | u::vlist' => if beq_id (Id u) (Id var) then
+  | u::vlist' => if beq_id (Id u) var then
                Some O
              else
                match find var vlist' with
@@ -201,11 +235,11 @@ Fixpoint gen_vlist (c:com) (ivlist: varlist): varlist :=
   | IFB b THEN c1 ELSE c2 FI => let v1 := gen_vlist c1 ivlist in
                                 gen_vlist c2 v1
   | WHILE b DO c1 END => gen_vlist c1 ivlist
-  | CAss x a => match find x ivlist with
+  | x ::= a => match find (Id x) ivlist with
                 | None => x::ivlist
-                | _ => nil
+                | _ => ivlist
                 end
-  | CSkip => nil
+  | CSkip => ivlist
   end.
 
 Definition get_vlist (c:com): varlist :=
@@ -221,13 +255,118 @@ Definition mycode :=
      X ::= ANum 3 ;; WHILE BTrue DO Y ::= AId (Id X) END
   ).
 
-Compute (find Z (get_vlist mycode)).
+Compute (find (Id Z) (get_vlist mycode)).
 
-Fixpoint compile_aexp (a:aexp) (stklen: nat) (vlist : varlist): (code * nat) :=
+Fixpoint compile_aexp (stklen: nat) (vlist : varlist) (a:aexp): code :=
   match a with
   | ANum n => Iconst n :: nil
-  | AId x => match find vlist x with
-             | None => Iconst 0
-             | Some n => Iget (stklen-1+n)
-                              
+  | AId x => match find x vlist with
+             | None => Iconst 0 :: nil
+             | Some n => Iget (stklen-(length vlist)+n) :: nil
+             end
+  | APlus a1 a2 => let code1 := compile_aexp stklen vlist a1 in
+                   let code2 := compile_aexp (stklen+1) vlist a2 in
+                   code1 ++ code2 ++ Iadd::nil
+  | AMul a1 a2 => let code1 := compile_aexp stklen vlist a1 in
+                   let code2 := compile_aexp (stklen+1) vlist a2 in
+                   code1 ++ code2 ++ Imul::nil
+  | AMinus a1 a2 => let code1 := compile_aexp stklen vlist a1 in
+                   let code2 := compile_aexp (stklen+1) vlist a2 in
+                   code1 ++ code2 ++ Isub::nil
+  end.
+
+
+Fixpoint compile_bexp (stklen: nat) (vlist : varlist) (b:bexp) (cond:bool) (ofs:nat): code :=
+  match b with
+  | BTrue => if cond then Ibranch_forward ofs :: nil else nil
+  | BFalse => if cond then nil else Ibranch_forward ofs :: nil
+  | BEq a1 a2 =>
+    let code1 := compile_aexp stklen vlist a1 in
+    let code2 := compile_aexp (stklen+1) vlist a2 in
+    code1 ++ code2 ++
+               (if cond then Ibeq ofs :: nil else Ibne ofs :: nil)
+  | BLe a1 a2 =>
+    let ans1 := compile_aexp stklen vlist a1 in
+    let ans2 := compile_aexp (stklen+1) vlist a2 in
+    ans1 ++ ans2 ++
+               (if cond then Ible ofs :: nil else Ibgt ofs :: nil)
+  | BNot b1 =>
+    compile_bexp stklen vlist b1 (negb cond) ofs
+  | BAnd b1 b2 =>
+    let code2 := compile_bexp stklen vlist b2 cond ofs in
+    let code1 := compile_bexp stklen vlist b1 false (if cond then length code2
+                                     else ofs + (length code2)) in
+     code1 ++ code2
+  end.
+
+
+Fixpoint compile_com (vlist: varlist) (c:com): code :=
+  let stklen := length vlist in
+  match c with
+  | SKIP => nil
+  | c1 ;; c2 => (compile_com vlist c1) ++ (compile_com vlist c2)
+  | IFB b THEN ifso ELSE ifnot FI =>
+    let code_ifso := compile_com vlist ifso in
+    let code_ifnot := compile_com vlist ifnot in
+    compile_bexp stklen vlist b false (length code_ifso + 1)
+                 ++ code_ifso
+                 ++ Ibranch_forward (length code_ifnot)
+                 :: code_ifnot
+  | WHILE b DO body END =>
+    let code_body := compile_com vlist body in
+    let code_test := compile_bexp stklen vlist b false (length code_body + 1) in
+    code_test
+      ++ code_body
+      ++ Ibranch_backward (length code_test + length code_body + 1)
+      :: nil
+  | var ::= a =>
+            match find (Id var) vlist with
+            | Some n =>
+              compile_aexp stklen vlist a
+                           ++ Iset n ::nil
+            | _ => nil
+            end
+  end.
+
+          
+Definition compile_program (p: com): code :=
+  compile_com (get_vlist p) p ++ Ihalt::nil.
+
+Definition test_prog0 := X ::= ANum 3;; Y ::= AId (Id X).
+Definition test_prog1 := WHILE BTrue DO SKIP END.
+Definition test_prog2 :=
+  X ::= ANum 3 ;;
+  Y ::= AId (Id X) ;;
+  WHILE BLe (ANum O) (AId (Id X)) DO Y ::= APlus (AId (Id Y)) (AId (Id X)) ;; X ::= AMinus (AId (Id X)) (ANum 1)  END.
+
+Print test_prog2.
+Compute (get_vlist test_prog2).
+Compute (compile_program test_prog0). 
+Compute (compile_program test_prog1).
+Compute (compile_program test_prog2).
+
+
+Definition mach_terminates (C: code) (stk_init stk_fin: stack) :=
+  exists pc,
+  code_at C pc = Some Ihalt /\
+  star (transition C) (0, stk_init) (pc, stk_fin).
+
+Theorem compile_program_correct_terminating:
+  forall c st,
+    c / empty_state \\ st ->
+    exists stk,
+      mach_terminates (compile_program c) nil stk
+      /\ True.
+Proof.
   
+  
+             
+
+                                               
+            
+          
+
+            
+          
+          
+          
