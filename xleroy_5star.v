@@ -3,46 +3,14 @@ From Coq Require Import Strings.String.
 From Coq Require Import Bool.Bool.
 From Coq Require Import Arith.Arith.
 From Coq Require Import Lists.List.
-Require Import Sequences.
+Require Export Sequences.
+Require Export Maps.
 (*From Coq Require Import Arith.EqNat.*)
 (*From Coq Require Import omega.Omega.*)
 (*From Coq Require Import Init.Nat.*)
 Import ListNotations.
 
-
-
-Reserved Notation "c1 '/' st '\\' st'"
-                  (at level 40, st at level 39).
-
-Inductive ceval : com -> state -> state -> Prop :=
-  | E_Skip : forall st,
-      SKIP / st \\ st
-  | E_Ass  : forall st a1 n x,
-      aeval st a1 = n ->
-      (x ::= a1) / st \\ (t_update st x n)
-  | E_Seq : forall c1 c2 st st' st'',
-      c1 / st  \\ st' ->
-      c2 / st' \\ st'' ->
-      (c1 ;; c2) / st \\ st''
-  | E_IfTrue : forall st st' b c1 c2,
-      beval st b = true ->
-      c1 / st \\ st' ->
-      (IFB b THEN c1 ELSE c2 FI) / st \\ st'
-  | E_IfFalse : forall st st' b c1 c2,
-      beval st b = false ->
-      c2 / st \\ st' ->
-      (IFB b THEN c1 ELSE c2 FI) / st \\ st'
-  | E_WhileFalse : forall b st c,
-      beval st b = false ->
-      (WHILE b DO c END) / st \\ st
-  | E_WhileTrue : forall st st' st'' b c,
-      beval st b = true ->
-      c / st \\ st' ->
-      (WHILE b DO c END) / st' \\ st'' ->
-      (WHILE b DO c END) / st \\ st''
-
-  where "c1 '/' st '\\' st'" := (ceval c1 st st').
-(* ===================== *)
+(* ========== Maps  =========== *)
 Inductive id : Type :=
   | Id : string -> id.
 
@@ -83,7 +51,35 @@ Theorem false_beq_id : forall x y : id,
 Proof.
   intros x y. rewrite beq_id_false_iff.
   intros H. apply H. Qed.
-(* ====================================================== *)
+
+
+Definition total_map (A:Type) := id -> A.
+
+(** Intuitively, a total map over an element type [A] is just a
+    function that can be used to look up [id]s, yielding [A]s. *)
+
+(** The function [t_empty] yields an empty total map, given a default
+    element; this map always returns the default element when applied
+    to any id. *)
+
+Definition t_empty {A:Type} (v : A) : total_map A :=
+  (fun _ => v).
+
+(** More interesting is the [update] function, which (as before) takes
+    a map [m], a key [x], and a value [v] and returns a new map that
+    takes [x] to [v] and takes every other key to whatever [m] does. *)
+
+Definition t_update {A:Type} (m : total_map A)
+                    (x : id) (v : A) :=
+  fun x' => if beq_id x x' then v else m x'.
+
+(* ======================= Imp =============================== *)
+
+Definition state := total_map nat.
+
+Definition empty_state : state :=
+  t_empty 0.
+
 
 Inductive aexp : Type :=
 | ANum : nat -> aexp
@@ -99,7 +95,28 @@ Inductive bexp : Type :=
 | BLe : aexp -> aexp -> bexp
 | BNot : bexp -> bexp
 | BAnd : bexp -> bexp -> bexp.
-  
+
+
+Fixpoint aeval (st : state) (a : aexp) : nat :=
+  match a with
+  | ANum n => n
+  | AId x => st x                                (* <----- NEW *)
+  | APlus a1 a2 => (aeval st a1) + (aeval st a2)
+  | AMinus a1 a2  => (aeval st a1) - (aeval st a2)
+  | AMul a1 a2 => (aeval st a1) * (aeval st a2)
+  end.
+
+Fixpoint beval (st : state) (b : bexp) : bool :=
+  match b with
+  | BTrue       => true
+  | BFalse      => false
+  | BEq a1 a2   => beq_nat (aeval st a1) (aeval st a2)
+  | BLe a1 a2   => leb (aeval st a1) (aeval st a2)
+  | BNot b1     => negb (beval st b1)
+  | BAnd b1 b2  => andb (beval st b1) (beval st b2)
+  end.
+
+
 Inductive com : Type :=
 | CSkip
 | CAss (x : string) (a : aexp)
@@ -118,6 +135,55 @@ Notation "'WHILE' b 'DO' c 'END'" :=
 Notation "'IFB' c1 'THEN' c2 'ELSE' c3 'FI'" :=
   (CIf c1 c2 c3) (at level 80, right associativity).
 
+
+
+Reserved Notation "c1 '/' st '\\' st'"
+                  (at level 40, st at level 39).
+
+Inductive ceval : com -> state -> state -> Prop :=
+  | E_Skip : forall st,
+      SKIP / st \\ st
+  | E_Ass  : forall st a1 n x,
+      aeval st a1 = n ->
+      (x ::= a1) / st \\ (t_update st (Id x) n)
+  | E_Seq : forall c1 c2 st st' st'',
+      c1 / st  \\ st' ->
+      c2 / st' \\ st'' ->
+      (c1 ;; c2) / st \\ st''
+  | E_IfTrue : forall st st' b c1 c2,
+      beval st b = true ->
+      c1 / st \\ st' ->
+      (IFB b THEN c1 ELSE c2 FI) / st \\ st'
+  | E_IfFalse : forall st st' b c1 c2,
+      beval st b = false ->
+      c2 / st \\ st' ->
+      (IFB b THEN c1 ELSE c2 FI) / st \\ st'
+  | E_WhileFalse : forall b st c,
+      beval st b = false ->
+      (WHILE b DO c END) / st \\ st
+  | E_WhileTrue : forall st st' st'' b c,
+      beval st b = true ->
+      c / st \\ st' ->
+      (WHILE b DO c END) / st' \\ st'' ->
+      (WHILE b DO c END) / st \\ st''
+
+  where "c1 '/' st '\\' st'" := (ceval c1 st st').
+
+
+
+
+(*<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><*)
+
+
+
+
+
+
+
+
+
+
+(*<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><*)
 
 Inductive instruction: Type :=
 | Iconst (n:nat)                (*Push integer 'n' to stack*)
@@ -241,9 +307,6 @@ Fixpoint gen_vlist (c:com) (ivlist: varlist): varlist :=
                 end
   | CSkip => ivlist
   end.
-
-Definition get_vlist (c:com): varlist :=
-  gen_vlist c nil.
     
 Definition X := ("X"%string).
 Definition Y := ("Y"%string).
@@ -255,7 +318,7 @@ Definition mycode :=
      X ::= ANum 3 ;; WHILE BTrue DO Y ::= AId (Id X) END
   ).
 
-Compute (find (Id Z) (get_vlist mycode)).
+Compute (find (Id Z) (gen_vlist mycode nil)).
 
 Fixpoint compile_aexp (stklen: nat) (vlist : varlist) (a:aexp): code :=
   match a with
@@ -328,9 +391,16 @@ Fixpoint compile_com (vlist: varlist) (c:com): code :=
             end
   end.
 
-          
+
+Fixpoint initialize_vars (l : varlist): code :=
+  match l with
+  | nil => nil
+  | v :: l' => (Iconst O) :: initialize_vars l'
+  end.
+
 Definition compile_program (p: com): code :=
-  compile_com (get_vlist p) p ++ Ihalt::nil.
+  let vlist := gen_vlist p nil in
+  initialize_vars vlist ++  compile_com vlist p ++ Ihalt::nil.
 
 Definition test_prog0 := X ::= ANum 3;; Y ::= AId (Id X).
 Definition test_prog1 := WHILE BTrue DO SKIP END.
@@ -340,11 +410,17 @@ Definition test_prog2 :=
   WHILE BLe (ANum O) (AId (Id X)) DO Y ::= APlus (AId (Id Y)) (AId (Id X)) ;; X ::= AMinus (AId (Id X)) (ANum 1)  END.
 
 Print test_prog2.
-Compute (get_vlist test_prog2).
+Compute (gen_vlist test_prog2 []).
 Compute (compile_program test_prog0). 
 Compute (compile_program test_prog1).
 Compute (compile_program test_prog2).
 
+
+Fact string_dec_refl:
+  forall x, (if string_dec x x then true else false) = true.
+Proof.
+  intros. destruct string_dec; auto.
+Qed.
 
 Definition mach_terminates (C: code) (stk_init stk_fin: stack) :=
   exists pc,
@@ -358,8 +434,26 @@ Theorem compile_program_correct_terminating:
       mach_terminates (compile_program c) nil stk
       /\ True.
 Proof.
+  intros c st H.
+  inversion H.
+  {
+    unfold mach_terminates.
+    exists [].
+    split. 2 : { exact I. }
+    exists 0. split. trivial.
+    cbv delta in *. simpl. apply star_refl.
+  }
+  {
+    unfold mach_terminates.
+    exists [aeval empty_state a1].
+    split. 2 : { trivial. } 
+    exists (length (compile_program (x ::= a1))).
+    split.
+    - unfold compile_program. simpl. rewrite string_dec_refl.
+      Search "code".
+  }
   
-  
+    
              
 
                                                
