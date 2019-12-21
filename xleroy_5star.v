@@ -14,6 +14,10 @@ Require Import Omega.
 Inductive id : Type :=
   | Id : string -> id.
 
+Theorem id_inj: forall u v, Id u = Id v <-> u = v.
+Proof. intros. split; intros; [inversion H | rewrite H]; auto.
+Qed.
+
 Definition beq_id x y :=
   match x,y with
     | Id n1, Id n2 => if string_dec n1 n2 then true else false
@@ -73,6 +77,18 @@ Definition t_update {A:Type} (m : total_map A)
                     (x : id) (v : A) :=
   fun x' => if beq_id x x' then v else m x'.
 
+Search "eq".
+
+Theorem if_string_dec_eqb : forall s1 s2,
+    (if string_dec s1 s2 then true else false) =
+    String.eqb s1 s2.
+Proof.
+  intros.
+  destruct (string_dec s1 s2). rewrite e. auto using String.eqb_refl.
+  
+  destruct (s1 =? s2)%string eqn:E. 
+  apply String.eqb_eq in E. unfold not in n. destruct (n E). reflexivity.
+Qed.
 (* ======================= Imp =============================== *)
 
 Definition state := total_map nat.
@@ -461,7 +477,37 @@ Fixpoint beval (v:varlist) (stk: stack) (b:bexp): bool :=
   end.
 
   
-                      
+
+
+Lemma find_get_not_none: forall i vlist n stk,
+    find i vlist = Some n ->
+    exists m,
+      get_nth_slot stk (length stk - length vlist + n) = Some m.
+Proof.
+  assert (H1:forall vlist i n, find i vlist = Some n -> length vlist >= n).
+  {
+    induction vlist as [| v vl].
+    - intros. discriminate.
+    - destruct i as [i]. simpl. rewrite if_string_dec_eqb.
+      destruct (v =? i)%string eqn:E.
+      + intros. injection H. omega.
+      + destruct (find (Id i) vl) as [m|] eqn:Q.
+        intros. injection H.
+        pose (H1 := IHvl _ _ Q). omega.
+       intros. discriminate.
+  }
+
+  assert (H2: forall stk u, u < length stk -> exists v,
+               get_nth_slot stk u = Some v).
+  (*{
+    induction stk. intros. simpl in H. omega.
+    intros vu H.
+    
+  }*)
+Admitted.
+
+
+
 Reserved Notation "c1 '/' st '\\' st'"
                   (at level 40, st at level 39).
                         
@@ -481,21 +527,8 @@ Proof.
     destruct (find i vlist) as [| n] eqn:E.
     - simpl. eapply trans_get. eauto with codeseq.
 
-      assert(H1: find i vlist = Some n -> length vlist >= n).
-      {
-        intros. induction vlist as [| v l']. discriminate.
-        destruct (beq_id i (Id v)) eqn:E'.
-        + simpl in H0. apply beq_id_true_iff in E'. rewrite E' in H0.
-          rewrite string_dec_refl in H0. inversion H0. omega.
-        + apply beq_id_false_iff in E'. destruct i as [i'].
-          simpl in H0.
-          assert (Nvi : (if string_dec v i' then true else false) = false).
-          { apply string_dec }
-      }
   }
-
-
-
+Qed.
 
 
 
