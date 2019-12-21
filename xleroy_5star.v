@@ -461,9 +461,9 @@ Fixpoint aeval (v:varlist) (stk: stack) (a:aexp): nat :=
                end
              | _ => 0
              end
-  | APlus a1 a2 => (aeval v stk a1) + (aeval v stk a2)
-  | AMinus a1 a2 => (aeval v stk a1) - (aeval v stk a2)
-  | AMul a1 a2 => (aeval v stk a1) * (aeval v stk a2)
+  | APlus a1 a2 => (aeval v stk a1) + (aeval v ((aeval v stk a1) ::stk) a2)
+  | AMinus a1 a2 => (aeval v stk a1) - (aeval v ((aeval v stk a1) ::stk) a2)
+  | AMul a1 a2 => (aeval v stk a1) * (aeval v ((aeval v stk a1) ::stk) a2)
   end.
 
 Fixpoint beval (v:varlist) (stk: stack) (b:bexp): bool :=
@@ -512,23 +512,38 @@ Reserved Notation "c1 '/' st '\\' st'"
                   (at level 40, st at level 39).
                         
 Lemma compile_aexp_correct:
-  forall (C:code) (stk:stack) (pc:nat) (vlist:varlist) (a:aexp),
+  forall (a:aexp) (C:code) (stk:stack) (pc:nat) (vlist:varlist),
     codeseq_at C pc (compile_aexp (length stk) vlist a) ->
     star (transition C) (pc, stk)
          (pc + length(compile_aexp (length stk) vlist a),
           (aeval vlist stk a)::stk).
 Proof.
-  induction a; intros.
-  
-  { apply star_one. apply trans_const. eauto with codeseq. }
+  induction a.
+  { intros. apply star_one. apply trans_const. eauto with codeseq. }
   {
+    intros.
     apply star_one.
     simpl in *.
     destruct (find i vlist) as [| n] eqn:E.
     - simpl. eapply trans_get. eauto with codeseq.
-
+      Check find_get_not_none.
+      destruct (find_get_not_none _ _ _ stk E) as [m mH].
+      rewrite mH. reflexivity.
+    - simpl. apply trans_const. eauto with codeseq.
   }
-Qed.
+  {
+    intros. simpl. eapply star_trans.
+    apply (IHa1 C stk pc vlist). eauto with codeseq.
+    eapply star_trans. apply (IHa2 _ _ _ vlist). simpl in H.
+    rewrite plus_comm in H. simpl in H. eauto with codeseq.
+    apply star_one. repeat (rewrite app_length || simpl).
+    rewrite plus_assoc. rewrite (Nat.add_1_r (length stk)).
+    rewrite plus_assoc with (p := 1).
+    apply trans_add. simpl in H. rewrite Nat.add_1_r in H. eauto with codeseq.
+  }
+
+  (* DIY just replace trans_add*)
+Admitted.
 
 
 
