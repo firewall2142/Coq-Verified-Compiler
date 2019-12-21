@@ -5,10 +5,10 @@ From Coq Require Import Arith.Arith.
 From Coq Require Import Lists.List.
 Require Export Sequences.
 Require Export Maps.
+Require Import Omega.
 (*From Coq Require Import Arith.EqNat.*)
 (*From Coq Require Import omega.Omega.*)
 (*From Coq Require Import Init.Nat.*)
-Import ListNotations.
 
 (* ========== Maps  =========== *)
 Inductive id : Type :=
@@ -97,26 +97,6 @@ Inductive bexp : Type :=
 | BAnd : bexp -> bexp -> bexp.
 
 
-Fixpoint aeval (st : state) (a : aexp) : nat :=
-  match a with
-  | ANum n => n
-  | AId x => st x                                (* <----- NEW *)
-  | APlus a1 a2 => (aeval st a1) + (aeval st a2)
-  | AMinus a1 a2  => (aeval st a1) - (aeval st a2)
-  | AMul a1 a2 => (aeval st a1) * (aeval st a2)
-  end.
-
-Fixpoint beval (st : state) (b : bexp) : bool :=
-  match b with
-  | BTrue       => true
-  | BFalse      => false
-  | BEq a1 a2   => beq_nat (aeval st a1) (aeval st a2)
-  | BLe a1 a2   => leb (aeval st a1) (aeval st a2)
-  | BNot b1     => negb (beval st b1)
-  | BAnd b1 b2  => andb (beval st b1) (beval st b2)
-  end.
-
-
 Inductive com : Type :=
 | CSkip
 | CAss (x : string) (a : aexp)
@@ -134,49 +114,6 @@ Notation "'WHILE' b 'DO' c 'END'" :=
   (CWhile b c) (at level 80, right associativity).
 Notation "'IFB' c1 'THEN' c2 'ELSE' c3 'FI'" :=
   (CIf c1 c2 c3) (at level 80, right associativity).
-
-
-
-Reserved Notation "c1 '/' st '\\' st'"
-                  (at level 40, st at level 39).
-
-Inductive ceval : com -> state -> state -> Prop :=
-  | E_Skip : forall st,
-      SKIP / st \\ st
-  | E_Ass  : forall st a1 n x,
-      aeval st a1 = n ->
-      (x ::= a1) / st \\ (t_update st (Id x) n)
-  | E_Seq : forall c1 c2 st st' st'',
-      c1 / st  \\ st' ->
-      c2 / st' \\ st'' ->
-      (c1 ;; c2) / st \\ st''
-  | E_IfTrue : forall st st' b c1 c2,
-      beval st b = true ->
-      c1 / st \\ st' ->
-      (IFB b THEN c1 ELSE c2 FI) / st \\ st'
-  | E_IfFalse : forall st st' b c1 c2,
-      beval st b = false ->
-      c2 / st \\ st' ->
-      (IFB b THEN c1 ELSE c2 FI) / st \\ st'
-  | E_WhileFalse : forall b st c,
-      beval st b = false ->
-      (WHILE b DO c END) / st \\ st
-  | E_WhileTrue : forall st st' st'' b c,
-      beval st b = true ->
-      c / st \\ st' ->
-      (WHILE b DO c END) / st' \\ st'' ->
-      (WHILE b DO c END) / st \\ st''
-
-  where "c1 '/' st '\\' st'" := (ceval c1 st st').
-
-
-
-
-(*<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><*)
-
-
-
-
 
 
 
@@ -205,12 +142,78 @@ Definition code := list instruction.
 Definition stack := list nat.
 Definition configuration := (nat * stack)%type.
 
+
+(* ======================= codeseq =============================== *)
+
+
 Fixpoint code_at (C:code) (pc: nat) : option instruction :=
   match C, pc with
   | nil, _ => None
   | i::C', O => Some i
   | i::C', S pc' => code_at C' pc'
   end.
+
+
+Inductive codeseq_at: code -> nat -> code -> Prop :=
+  | codeseq_at_intro: forall C1 C2 C3 pc,
+      pc = length C1 ->
+      codeseq_at (C1 ++ C2 ++ C3) pc C2.
+
+Lemma code_at_app:
+  forall i c2 c1 pc,
+  pc = length c1 ->
+  code_at (c1 ++ i :: c2) pc = Some i.
+Proof.
+  induction c1; simpl; intros; subst pc; auto.
+Qed.
+
+Lemma codeseq_at_head:
+  forall C pc i C',
+  codeseq_at C pc (i :: C') ->
+  code_at C pc = Some i.
+Proof.
+  intros. inversion H. simpl. apply code_at_app. auto.
+Qed.
+
+Lemma codeseq_at_tail:
+  forall C pc i C',
+  codeseq_at C pc (i :: C') ->
+  codeseq_at C (pc + 1) C'.
+Proof.
+  intros. inversion H. 
+  change (C1 ++ (i :: C') ++ C3)
+    with (C1 ++ (i :: nil) ++ C' ++ C3).
+  rewrite <- app_ass. constructor. rewrite app_length. auto.
+Qed. 
+
+Lemma codeseq_at_app_left:
+  forall C pc C1 C2,
+  codeseq_at C pc (C1 ++ C2) ->
+  codeseq_at C pc C1.
+Proof.
+  intros. inversion H. rewrite app_ass. constructor. auto.
+Qed.
+
+Lemma codeseq_at_app_right:
+  forall C pc C1 C2,
+  codeseq_at C pc (C1 ++ C2) ->
+  codeseq_at C (pc + length C1) C2.
+Proof.
+  intros. inversion H. rewrite app_ass. rewrite <- app_ass. constructor. rewrite app_length. auto.
+Qed.
+
+Lemma codeseq_at_app_right2:
+  forall C pc C1 C2 C3,
+  codeseq_at C pc (C1 ++ C2 ++ C3) ->
+  codeseq_at C (pc + length C1) C2.
+Proof.
+  intros. inversion H. repeat rewrite app_ass. rewrite <- app_ass. constructor. rewrite app_length. auto.
+Qed.
+
+Hint Resolve code_at_app codeseq_at_head codeseq_at_tail codeseq_at_app_left codeseq_at_app_right codeseq_at_app_right2: codeseq.
+
+
+(*<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><*)
 
 Fixpoint get_nth_slot (s:stack) (n:nat) : option nat :=
   match s, n with
@@ -410,7 +413,7 @@ Definition test_prog2 :=
   WHILE BLe (ANum O) (AId (Id X)) DO Y ::= APlus (AId (Id Y)) (AId (Id X)) ;; X ::= AMinus (AId (Id X)) (ANum 1)  END.
 
 Print test_prog2.
-Compute (gen_vlist test_prog2 []).
+Compute (gen_vlist test_prog2 nil).
 Compute (compile_program test_prog0). 
 Compute (compile_program test_prog1).
 Compute (compile_program test_prog2).
@@ -427,6 +430,78 @@ Definition mach_terminates (C: code) (stk_init stk_fin: stack) :=
   code_at C pc = Some Ihalt /\
   star (transition C) (0, stk_init) (pc, stk_fin).
 
+
+
+
+
+Fixpoint aeval (v:varlist) (stk: stack) (a:aexp): nat :=
+  match a with
+  | ANum n => n
+  | AId x => match find x v with
+             | Some n =>
+               match get_nth_slot stk ((length stk) - (length v) + n) with
+               | Some val => val
+               | _ => 0
+               end
+             | _ => 0
+             end
+  | APlus a1 a2 => (aeval v stk a1) + (aeval v stk a2)
+  | AMinus a1 a2 => (aeval v stk a1) - (aeval v stk a2)
+  | AMul a1 a2 => (aeval v stk a1) * (aeval v stk a2)
+  end.
+
+Fixpoint beval (v:varlist) (stk: stack) (b:bexp): bool :=
+  match b with
+  | BTrue => true
+  | BFalse => false
+  | BEq a1 a2 => beq_nat (aeval v stk a1) (aeval v stk a2)
+  | BLe a1 a2 => leb (aeval v stk a1) (aeval v stk a2)
+  | BNot b1 => negb (beval v stk b1)
+  | BAnd b1 b2 => andb (beval v stk b1) (beval v stk b2)
+  end.
+
+  
+                      
+Reserved Notation "c1 '/' st '\\' st'"
+                  (at level 40, st at level 39).
+                        
+Lemma compile_aexp_correct:
+  forall (C:code) (stk:stack) (pc:nat) (vlist:varlist) (a:aexp),
+    codeseq_at C pc (compile_aexp (length stk) vlist a) ->
+    star (transition C) (pc, stk)
+         (pc + length(compile_aexp (length stk) vlist a),
+          (aeval vlist stk a)::stk).
+Proof.
+  induction a; intros.
+  
+  { apply star_one. apply trans_const. eauto with codeseq. }
+  {
+    apply star_one.
+    simpl in *.
+    destruct (find i vlist) as [| n] eqn:E.
+    - simpl. eapply trans_get. eauto with codeseq.
+
+      assert(H1: find i vlist = Some n -> length vlist >= n).
+      {
+        intros. induction vlist as [| v l']. discriminate.
+        destruct (beq_id i (Id v)) eqn:E'.
+        + simpl in H0. apply beq_id_true_iff in E'. rewrite E' in H0.
+          rewrite string_dec_refl in H0. inversion H0. omega.
+        + apply beq_id_false_iff in E'. destruct i as [i'].
+          simpl in H0.
+          assert (Nvi : (if string_dec v i' then true else false) = false).
+          { apply string_dec }
+      }
+  }
+
+
+
+
+
+
+
+
+
 Theorem compile_program_correct_terminating:
   forall c st,
     c / empty_state \\ st ->
@@ -438,19 +513,21 @@ Proof.
   inversion H.
   {
     unfold mach_terminates.
-    exists [].
+    exists nil.
     split. 2 : { exact I. }
     exists 0. split. trivial.
     cbv delta in *. simpl. apply star_refl.
   }
   {
     unfold mach_terminates.
-    exists [aeval empty_state a1].
+    exists (aeval empty_state a1 :: nil).
     split. 2 : { trivial. } 
-    exists (length (compile_program (x ::= a1))).
+    exists (length (Iconst 0::nil ++ compile_aexp 1 (x::nil) a1 ++ Iset 0 ::nil)).
     split.
-    - unfold compile_program. simpl. rewrite string_dec_refl.
-      Search "code".
+    - unfold compile_program. simpl. rewrite string_dec_refl. auto with codeseq.
+    - unfold compile_program. unfold gen_vlist. simpl. rewrite string_dec_refl.
+      eapply star_trans. apply star_one. apply trans_const. reflexivity.
+      simpl. 
   }
   
     
