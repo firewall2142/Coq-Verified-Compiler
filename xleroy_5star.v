@@ -238,16 +238,17 @@ Fixpoint get_nth_slot (s:stack) (n:nat) : option nat :=
   | v :: s', S n' => get_nth_slot s' n'
   end.
 
-Fixpoint set_nth_slot (s:stack) (n:nat) (v:nat): option stack :=
+Fixpoint set_nth_slot (s:stack) (n:nat) (val:nat): option stack :=
   match s, n with
   | nil, _ => None
-  | u :: s', O => Some (v :: s')
+  | u :: s', O => Some (val :: s')
   | u :: s', S n' =>
-    match set_nth_slot s' n' v with
+    match set_nth_slot s' n' val with
     | None => None
     | Some ns' => Some (u :: ns')
     end
   end.
+    
 
 
 Inductive transition (C: code): configuration -> configuration -> Prop :=
@@ -382,20 +383,21 @@ Fixpoint compile_bexp (stklen: nat) (vlist : varlist) (b:bexp) (cond:bool) (ofs:
   end.
 
 
-Fixpoint compile_com (vlist: varlist) (c:com): code :=
+Fixpoint compile_com (stk: stack) (vlist: varlist) (c:com): code :=
   let stklen := length vlist in
   match c with
   | SKIP => nil
-  | c1 ;; c2 => (compile_com vlist c1) ++ (compile_com vlist c2)
+  | c1 ;; c2 => (compile_com stk
+                   vlist c1) ++ (compile_com stk vlist c2)
   | IFB b THEN ifso ELSE ifnot FI =>
-    let code_ifso := compile_com vlist ifso in
-    let code_ifnot := compile_com vlist ifnot in
+    let code_ifso := compile_com stk vlist ifso in
+    let code_ifnot := compile_com stk vlist ifnot in
     compile_bexp stklen vlist b false (length code_ifso + 1)
                  ++ code_ifso
                  ++ Ibranch_forward (length code_ifnot)
                  :: code_ifnot
   | WHILE b DO body END =>
-    let code_body := compile_com vlist body in
+    let code_body := compile_com stk vlist body in
     let code_test := compile_bexp stklen vlist b false (length code_body + 1) in
     code_test
       ++ code_body
@@ -417,9 +419,15 @@ Fixpoint initialize_vars (l : varlist): code :=
   | v :: l' => (Iconst O) :: initialize_vars l'
   end.
 
+
+Fixpoint zerostk_of_len (n: nat) : stack :=
+  match n with | O => nil | S n' => O :: zerostk_of_len n' end.
+
 Definition compile_program (p: com): code :=
   let vlist := gen_vlist p nil in
-  initialize_vars vlist ++  compile_com vlist p ++ Ihalt::nil.
+  initialize_vars vlist
+  ++ compile_com (zerostk_of_len (length vlist)) vlist p
+  ++ Ihalt::nil.
 
 Definition test_prog0 := X ::= ANum 3;; Y ::= AId (Id X).
 Definition test_prog1 := WHILE BTrue DO SKIP END.
@@ -434,23 +442,29 @@ Compute (compile_program test_prog0).
 Compute (compile_program test_prog1).
 Compute (compile_program test_prog2).
 
-
-Fact string_dec_refl:
-  forall x, (if string_dec x x then true else false) = true.
-Proof.
-  intros. destruct string_dec; auto.
-Qed.
-
-Definition mach_terminates (C: code) (stk_init stk_fin: stack) :=
-  exists pc,
-  code_at C pc = Some Ihalt /\
-  star (transition C) (0, stk_init) (pc, stk_fin).
+Fixpoint aeval (st : state) (a:aexp): nat :=
+  match a with
+  | ANum n => n
+  | AId x => st x
+  | APlus a1 a2 => (aeval st a1) + (aeval st a2)
+  | AMinus a1 a2 => (aeval st a1) - (aeval st a2)
+  | AMul a1 a2 => (aeval st a1) * (aeval st a2)
+  end.
 
 
+Fixpoint beval (st : state) (b : bexp) : bool :=
+  match b with
+  | BTrue       => true
+  | BFalse      => false
+  | BEq a1 a2   => beq_nat (aeval st a1) (aeval st a2)
+  | BLe a1 a2   => leb (aeval st a1) (aeval st a2)
+  | BNot b1     => negb (beval st b1)
+  | BAnd b1 b2  => andb (beval st b1) (beval st b2)
+  end.
 
 
 
-Fixpoint aeval (v:varlist) (stk: stack) (a:aexp): nat :=
+Fixpoint aeval_stk (v:varlist) (stk: stack) (a:aexp): nat :=
   match a with
   | ANum n => n
   | AId x => match find x v with
@@ -461,62 +475,185 @@ Fixpoint aeval (v:varlist) (stk: stack) (a:aexp): nat :=
                end
              | _ => 0
              end
-  | APlus a1 a2 => (aeval v stk a1) + (aeval v ((aeval v stk a1) ::stk) a2)
-  | AMinus a1 a2 => (aeval v stk a1) - (aeval v ((aeval v stk a1) ::stk) a2)
-  | AMul a1 a2 => (aeval v stk a1) * (aeval v ((aeval v stk a1) ::stk) a2)
+  | APlus a1 a2 => (aeval_stk v stk a1) + (aeval_stk v ((aeval_stk v stk a1) ::stk) a2)
+  | AMinus a1 a2 => (aeval_stk v stk a1) - (aeval_stk v ((aeval_stk v stk a1) ::stk) a2)
+  | AMul a1 a2 => (aeval_stk v stk a1) * (aeval_stk v ((aeval_stk v stk a1) ::stk) a2)
   end.
 
-Fixpoint beval (v:varlist) (stk: stack) (b:bexp): bool :=
+Fixpoint beval_stk (v:varlist) (stk: stack) (b:bexp): bool :=
   match b with
   | BTrue => true
   | BFalse => false
-  | BEq a1 a2 => beq_nat (aeval v stk a1) (aeval v stk a2)
-  | BLe a1 a2 => leb (aeval v stk a1) (aeval v stk a2)
-  | BNot b1 => negb (beval v stk b1)
-  | BAnd b1 b2 => andb (beval v stk b1) (beval v stk b2)
+  | BEq a1 a2 => beq_nat (aeval_stk v stk a1) (aeval_stk v stk a2)
+  | BLe a1 a2 => leb (aeval_stk v stk a1) (aeval_stk v stk a2)
+  | BNot b1 => negb (beval_stk v stk b1)
+  | BAnd b1 b2 => andb (beval_stk v stk b1) (beval_stk v stk b2)
   end.
 
-  
 
 
-Lemma find_get_not_none: forall i vlist n stk,
+
+
+(*<><><><><><><><><> HELPER <><><><><><><><><><><*)
+
+
+
+
+
+Fact string_dec_refl:
+  forall x, (if string_dec x x then true else false) = true.
+Proof.
+  intros. destruct string_dec; auto.
+Qed.
+
+Fact get_nth_success: forall stk u, u < length stk -> exists v,
+      get_nth_slot stk u = Some v.
+Proof.
+  induction stk.
+  simpl. intros. omega.
+  intros u.
+  destruct u.
+  - subst. intros.
+    exists a. reflexivity.
+  - simpl. intros. apply IHstk. omega.
+Qed.
+
+Fact find_list_length:
+  forall vlist i n,
+    find i vlist = Some n -> n < length vlist.
+Proof.
+  induction vlist as [| v vl].
+  - intros. discriminate.
+  - destruct i as [i]. simpl. rewrite if_string_dec_eqb.
+    destruct (v =? i)%string eqn:E.
+    + intros. injection H. omega.
+    + destruct (find (Id i) vl) as [m|] eqn:Q.
+      intros. injection H.
+      pose (H1 := IHvl _ _ Q). omega.
+      intros. discriminate.
+Qed.
+
+Theorem find_get_ofs: forall i vlist n stk,
     find i vlist = Some n ->
     exists m,
       get_nth_slot stk (length stk - length vlist + n) = Some m.
 Proof.
-  assert (H1:forall vlist i n, find i vlist = Some n -> length vlist >= n).
-  {
-    induction vlist as [| v vl].
-    - intros. discriminate.
-    - destruct i as [i]. simpl. rewrite if_string_dec_eqb.
-      destruct (v =? i)%string eqn:E.
-      + intros. injection H. omega.
-      + destruct (find (Id i) vl) as [m|] eqn:Q.
-        intros. injection H.
-        pose (H1 := IHvl _ _ Q). omega.
-       intros. discriminate.
-  }
+Admitted.
 
-  assert (H2: forall stk u, u < length stk -> exists v,
-               get_nth_slot stk u = Some v).
-  (*{
-    induction stk. intros. simpl in H. omega.
-    intros vu H.
-    
-  }*)
+
+Theorem set_nth_success:
+  forall stk pos val,
+    pos < length stk ->
+  exists stk',
+      set_nth_slot stk pos val = Some stk'.
+Proof.
+  induction stk.
+  - intros. simpl in H. omega.
+  - intros. destruct pos as [| pos]. simpl. eauto.
+    simpl in H.
+    cut (pos < length stk). simpl. intros.
+    destruct (IHstk pos val H0) as [ stk' hstk'].
+    rewrite hstk'. eauto.
+    omega.
+Qed.
+
+
+
+
+Definition agree (v : varlist) (stk : stack) (st : state) :=
+  forall i,
+    (forall n, find i v = Some n ->
+               (get_nth_slot stk (length stk - length v + n) = Some (st i)))
+    /\
+    (find i v = None -> st i = O).
+
+
+Theorem agree_length_prop : forall vl stk st,
+    agree vl stk st -> length stk >= length vl.
+Proof.
+  induction vl.
+  - intros. simpl. omega.
+  - intros.
 Admitted.
 
 
 
+
+
+
+(*<><><><><><><><><> HELPER END<><><><><><><><><><><*)
+
+
+
+
+
+
+Fact agree_aeval (v : varlist) (stk : stack) (st: state) :
+  forall (a:aexp),
+    agree v stk st -> aeval st a = aeval_stk v stk a.
+Proof.
+  intros.
+  unfold agree in *.
+  induction a.
+  - simpl. reflexivity.
+  - simpl. Check find_get_ofs.
+    destruct (H i) as [H1 H2].
+    destruct (find i v) as [n | ] eqn:E.
+Admitted.
+
+
+
+
+Fact agree_beval (v : varlist) (stk : stack) (st: state) :
+  forall (b:bexp),
+    agree v stk st -> beval st b = beval_stk v stk b.
+Proof.
+  induction b; simpl; intros; eauto using agree_aeval.
+  - rewrite (IHb H). reflexivity.
+  - rewrite (IHb1 H). rewrite (IHb2 H). reflexivity.
+Qed.
+    
 Reserved Notation "c1 '/' st '\\' st'"
                   (at level 40, st at level 39).
-                        
+
+Inductive ceval : com -> state -> state -> Prop :=
+  | E_Skip : forall st,
+      SKIP / st \\ st
+  | E_Ass  : forall st a1 n x,
+      aeval st a1 = n ->
+      (x ::= a1) / st \\ (t_update st (Id x) n)
+  | E_Seq : forall c1 c2 st st' st'',
+      c1 / st  \\ st' ->
+      c2 / st' \\ st'' ->
+      (c1 ;; c2) / st \\ st''
+  | E_IfTrue : forall st st' b c1 c2,
+      beval st b = true ->
+      c1 / st \\ st' ->
+      (IFB b THEN c1 ELSE c2 FI) / st \\ st'
+  | E_IfFalse : forall st st' b c1 c2,
+      beval st b = false ->
+      c2 / st \\ st' ->
+      (IFB b THEN c1 ELSE c2 FI) / st \\ st'
+  | E_WhileFalse : forall b st c,
+      beval st b = false ->
+      (WHILE b DO c END) / st \\ st
+  | E_WhileTrue : forall st st' st'' b c,
+      beval st b = true ->
+      c / st \\ st' ->
+      (WHILE b DO c END) / st' \\ st'' ->
+      (WHILE b DO c END) / st \\ st''
+
+  where "c1 '/' st '\\' st'" := (ceval c1 st st').
+
+
+
+
 Lemma compile_aexp_correct:
   forall (a:aexp) (C:code) (stk:stack) (pc:nat) (vlist:varlist),
     codeseq_at C pc (compile_aexp (length stk) vlist a) ->
     star (transition C) (pc, stk)
          (pc + length(compile_aexp (length stk) vlist a),
-          (aeval vlist stk a)::stk).
+          (aeval_stk vlist stk a)::stk).
 Proof.
   induction a.
   { intros. apply star_one. apply trans_const. eauto with codeseq. }
@@ -526,8 +663,8 @@ Proof.
     simpl in *.
     destruct (find i vlist) as [| n] eqn:E.
     - simpl. eapply trans_get. eauto with codeseq.
-      Check find_get_not_none.
-      destruct (find_get_not_none _ _ _ stk E) as [m mH].
+      Check find_get_ofs.
+      destruct (find_get_ofs _ _ _ stk E) as [m mH].
       rewrite mH. reflexivity.
     - simpl. apply trans_const. eauto with codeseq.
   }
@@ -546,10 +683,73 @@ Proof.
 Admitted.
 
 
+Definition mach_terminates (C: code) (stk_init stk_fin: stack) :=
+  exists pc,
+  code_at C pc = Some Ihalt /\
+  star (transition C) (0, stk_init) (pc, stk_fin).
+
+Search "agree".
+
+Lemma compile_com_correct_terminating:
+  forall (C:code) (c : com) (st st': state),
+  c / st \\ st' ->
+  forall (stk:stack) (vlist:varlist) (pc:nat),
+    codeseq_at C pc (compile_com stk vlist c) ->
+    agree vlist stk st ->
+  exists stk',
+     star (transition C) (pc, stk) (pc + length (compile_com stk vlist c), stk')
+     /\ agree vlist stk st'.
+Proof.
+  intros.
+  induction c.
+  {
+    exists stk. simpl. split. rewrite Nat.add_0_r. apply star_refl.
+    inversion H. subst. assumption.
+  }
+  {
+    unfold compile_com. simpl in H0.
+    destruct (find (Id x) vlist) as [n | ] eqn:E.
+    - Check agree_length_prop.
+      assert (E' : n < length stk).
+      {
+        pose (E''' := agree_length_prop _ _ _ H1).
+        pose (E'' := find_list_length _ _ _ E).
+        omega.
+      }
+
+      Check set_nth_success.
+      destruct (set_nth_success _ _ (aeval st a) E') as [stk' Hstk'].
+      exists stk'. simpl in H0.
+      split.
+      + eapply star_trans. apply compile_aexp_correct. eauto with codeseq.
+  }
+Qed.
 
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+(*
 Theorem compile_program_correct_terminating:
   forall c st,
     c / empty_state \\ st ->
@@ -558,14 +758,28 @@ Theorem compile_program_correct_terminating:
       /\ True.
 Proof.
   intros c st H.
-  inversion H.
+  induction H.
   {
     unfold mach_terminates.
     exists nil.
     split. 2 : { exact I. }
     exists 0. split. trivial.
-    cbv delta in *. simpl. apply star_refl.
+    apply star_refl.
   }
+  {
+    exists ((aeval st a1) :: nil).
+    split. 2:{ exact I. }
+    unfold mach_terminates.
+    exists (length(compile_program (x ::= a1)) - 1).
+    split.
+    - unfold compile_program. simpl. rewrite string_dec_refl.
+      rewrite app_length. simpl.
+      rewrite Nat.add_1_r. simpl. eauto with codeseq.
+    - unfold compile_program. unfold gen_vlist. simpl. rewrite string_dec_refl.
+      eapply star_trans. apply star_one. apply trans_const. simpl. auto.
+      
+  }
+  (*
   {
     unfold mach_terminates.
     exists (aeval empty_state a1 :: nil).
@@ -575,8 +789,9 @@ Proof.
     - unfold compile_program. simpl. rewrite string_dec_refl. auto with codeseq.
     - unfold compile_program. unfold gen_vlist. simpl. rewrite string_dec_refl.
       eapply star_trans. apply star_one. apply trans_const. reflexivity.
-      simpl. 
-  }
+      repeat rewrite app_length. simpl.
+      Check compile_aexp_correct.
+  }*)
   
     
              

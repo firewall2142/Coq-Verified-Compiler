@@ -1,5 +1,7 @@
 Set Implicit Arguments.
 
+Require Export Arith.Arith.
+
 Section SEQUENCES.
 
 Variable A: Type. (* the type of states *)
@@ -62,5 +64,10 @@ Qed.
 
 Definition all_seq_inf (a: A) : Prop :=
   forall b, star a b -> exists c, R b c.
+
+
+Search "add".
+
+Hint Resolve star_one star_trans Nat.add_comm Nat.add_assoc Nat.add_1_r : star_hints.
 
 End SEQUENCES.
