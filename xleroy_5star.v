@@ -120,6 +120,12 @@ Inductive com : Type :=
 | CIf (b : bexp) (c1 c2 : com)
 | CWhile (b : bexp) (c : com).
 
+Definition X := ("X"%string).
+Definition Y := ("Y"%string).
+Definition Z := ("Z"%string).
+Definition W := ("W"%string).
+
+
 Notation "'SKIP'" :=
   CSkip.
 Notation "x '::=' a" :=
@@ -131,7 +137,24 @@ Notation "'WHILE' b 'DO' c 'END'" :=
 Notation "'IFB' c1 'THEN' c2 'ELSE' c3 'FI'" :=
   (CIf c1 c2 c3) (at level 80, right associativity).
 
-
+Coercion Id : string >-> id.
+Coercion AId : id >-> aexp.
+Coercion ANum : nat >-> aexp.
+Definition bool_to_bexp (b : bool) : bexp :=
+  if b then BTrue else BFalse.
+Coercion bool_to_bexp : bool >-> bexp.
+Bind Scope imp_scope with aexp.
+Bind Scope imp_scope with bexp.
+Delimit Scope imp_scope with imp.
+Notation "x + y" := (APlus x y) (at level 50, left associativity) : imp_scope.
+Notation "x - y" := (AMinus x y) (at level 50, left associativity) : imp_scope.
+Notation "x * y" := (AMul x y) (at level 40, left associativity) : imp_scope.
+Notation "x <= y" := (BLe x y) (at level 70, no associativity) : imp_scope.
+Notation "x = y" := (BEq x y) (at level 70, no associativity) : imp_scope.
+Notation "x && y" := (BAnd x y) (at level 40, left associativity) : imp_scope.
+Notation "'~' b" := (BNot b) (at level 75, right associativity) : imp_scope.
+Definition example_aexp := (3 + (X * 2))%imp : aexp.
+Definition example_bexp := (true && ~(X <= 4))%imp : bexp.
 
 
 
@@ -231,25 +254,30 @@ Hint Resolve code_at_app codeseq_at_head codeseq_at_tail codeseq_at_app_left cod
 
 (*<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><*)
 
-Fixpoint get_nth_slot (s:stack) (n:nat) : option nat :=
-  match s, n with
-  | nil, _ => None
-  | v::s', O => Some v
-  | v :: s', S n' => get_nth_slot s' n'
+Fixpoint get_nth_slot (stk:stack) (n:nat) : option nat :=
+  match stk with
+  | nil => None
+  | v :: stk' =>
+    match n with
+    | O => Some v
+    | S n' => get_nth_slot stk' n'
+    end
   end.
 
-Fixpoint set_nth_slot (s:stack) (n:nat) (val:nat): option stack :=
-  match s, n with
-  | nil, _ => None
-  | u :: s', O => Some (val :: s')
-  | u :: s', S n' =>
-    match set_nth_slot s' n' val with
-    | None => None
-    | Some ns' => Some (u :: ns')
+Fixpoint set_nth_slot (stk:stack) (n:nat) (val:nat): option stack :=
+  match stk with
+  | nil => None
+  | s :: stk'  =>
+    match n with
+    | O => Some (val :: stk')
+    | S n' => match set_nth_slot stk' n' val with
+              | None => None
+              | Some ans => Some (s :: ans)
+              end
     end
   end.
     
-
+Import ListNotations.
 
 Inductive transition (C: code): configuration -> configuration -> Prop :=
   
@@ -328,10 +356,6 @@ Fixpoint gen_vlist (c:com) (ivlist: varlist): varlist :=
   | CSkip => ivlist
   end.
     
-Definition X := ("X"%string).
-Definition Y := ("Y"%string).
-Definition Z := ("Z"%string).
-
 
 Definition mycode :=
   (
@@ -384,7 +408,7 @@ Fixpoint compile_bexp (stklen: nat) (vlist : varlist) (b:bexp) (cond:bool) (ofs:
 
 
 Fixpoint compile_com (stk: stack) (vlist: varlist) (c:com): code :=
-  let stklen := length vlist in
+  let stklen := length stk in
   match c with
   | SKIP => nil
   | c1 ;; c2 => (compile_com stk
@@ -407,7 +431,7 @@ Fixpoint compile_com (stk: stack) (vlist: varlist) (c:com): code :=
             match find (Id var) vlist with
             | Some n =>
               compile_aexp stklen vlist a
-                           ++ Iset n ::nil
+                           ++ Iset (length stk - length vlist + n) ::nil
             | _ => nil
             end
   end.
@@ -562,10 +586,11 @@ Qed.
 
 Definition agree (v : varlist) (stk : stack) (st : state) :=
   forall i,
-    (forall n, find i v = Some n ->
+    (forall n, find i v = Some n <->
                (get_nth_slot stk (length stk - length v + n) = Some (st i)))
     /\
-    (find i v = None -> st i = O).
+    (find i v = None -> st i = O)
+.
 
 
 Theorem agree_length_prop : forall vl stk st,
@@ -576,9 +601,29 @@ Proof.
   - intros.
 Admitted.
 
+Theorem get_set_eq : forall pos l l' val,
+    set_nth_slot l pos val = Some l' ->
+    get_nth_slot l' pos = Some val.
+Proof.
+  (* Can't prove these for some reason *)
+Admitted.
 
-
-
+Fact set_nth_length: forall stk stk' p v,
+    set_nth_slot stk p v = Some stk' ->
+    length stk = length stk'.
+Proof.
+Admitted.
+  
+Fact stk_vlist_find_length :
+  forall stk n vlist i st,
+    find i vlist = Some n -> agree vlist stk st ->
+    length stk - length vlist + n < length stk.
+Proof.
+  intros.
+  pose (E1 := agree_length_prop _ _ _ H0).
+  pose (E2 := find_list_length _ _ _ H).
+  omega.
+Qed.
 
 
 (*<><><><><><><><><> HELPER END<><><><><><><><><><><*)
@@ -683,12 +728,27 @@ Proof.
 Admitted.
 
 
+
 Definition mach_terminates (C: code) (stk_init stk_fin: stack) :=
   exists pc,
   code_at C pc = Some Ihalt /\
   star (transition C) (0, stk_init) (pc, stk_fin).
 
 Search "agree".
+
+
+
+Definition test_prog3 :=
+  (Z ::= X;;
+       Y ::= 1;;
+       WHILE ~(Z = 0) DO
+         Y ::= Y * Z;;
+         Z ::= Z - 1
+      END)%imp.
+
+Import ListNotations.
+Compute (compile_program test_prog3).                     
+  
 
 Lemma compile_com_correct_terminating:
   forall (C:code) (c : com) (st st': state),
@@ -698,7 +758,7 @@ Lemma compile_com_correct_terminating:
     agree vlist stk st ->
   exists stk',
      star (transition C) (pc, stk) (pc + length (compile_com stk vlist c), stk')
-     /\ agree vlist stk st'.
+     /\ agree vlist stk' st'.
 Proof.
   intros.
   induction c.
@@ -709,19 +769,30 @@ Proof.
   {
     unfold compile_com. simpl in H0.
     destruct (find (Id x) vlist) as [n | ] eqn:E.
-    - Check agree_length_prop.
-      assert (E' : n < length stk).
-      {
-        pose (E''' := agree_length_prop _ _ _ H1).
-        pose (E'' := find_list_length _ _ _ E).
-        omega.
-      }
-
-      Check set_nth_success.
+    { 
+      pose (E' := stk_vlist_find_length _ _ _ _ st E H1).
       destruct (set_nth_success _ _ (aeval st a) E') as [stk' Hstk'].
       exists stk'. simpl in H0.
       split.
-      + eapply star_trans. apply compile_aexp_correct. eauto with codeseq.
+      - eapply star_trans. apply compile_aexp_correct. eauto with codeseq.
+        rewrite app_length. simpl. apply star_one.
+        rewrite plus_assoc. eapply trans_set. eauto with codeseq.
+        rewrite <- (agree_aeval _ _ _ _ H1). assumption.
+      - inversion H. subst. unfold agree in *.
+        intros. split.
+        + intros.
+          destruct (beq_id (Id x) i) eqn:idE.
+          * unfold t_update. rewrite idE. apply beq_id_true_iff in idE.
+            split.
+            subst. rewrite E in H2. inversion H2. subst.
+            apply get_set_eq with stk.
+            assert (L : length stk = length stk').
+            eapply set_nth_length. apply Hstk'.
+            rewrite <- L.
+            assumption.
+          *  
+
+    }     
   }
 Qed.
 
