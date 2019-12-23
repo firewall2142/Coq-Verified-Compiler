@@ -408,21 +408,20 @@ Fixpoint compile_bexp (stklen: nat) (vlist : varlist) (b:bexp) (cond:bool) (ofs:
   end.
 
 
-Fixpoint compile_com (stk: stack) (vlist: varlist) (c:com): code :=
-  let stklen := length stk in
+Fixpoint compile_com (stklen : nat) (vlist: varlist) (c:com): code :=
   match c with
   | SKIP => nil
-  | c1 ;; c2 => (compile_com stk
+  | c1 ;; c2 => (compile_com stklen
                    vlist c1) ++ (compile_com stk vlist c2)
   | IFB b THEN ifso ELSE ifnot FI =>
-    let code_ifso := compile_com stk vlist ifso in
-    let code_ifnot := compile_com stk vlist ifnot in
+    let code_ifso := compile_com stklen vlist ifso in
+    let code_ifnot := compile_com stklen vlist ifnot in
     compile_bexp stklen vlist b false (length code_ifso + 1)
                  ++ code_ifso
                  ++ Ibranch_forward (length code_ifnot)
                  :: code_ifnot
   | WHILE b DO body END =>
-    let code_body := compile_com stk vlist body in
+    let code_body := compile_com stklen vlist body in
     let code_test := compile_bexp stklen vlist b false (length code_body + 1) in
     code_test
       ++ code_body
@@ -788,7 +787,7 @@ Lemma compile_com_correct_terminating:
   forall (c : com) (st st': state) (C:code) (stk:stack) (vlist:varlist) (pc:nat),
   c / st \\ st' ->
     varlist_contains_all c vlist -> 
-    codeseq_at C pc (compile_com stk vlist c) ->
+    codeseq_at C pc (compile_com (length stk) vlist c) ->
     agree vlist stk st ->
   exists stk',
      star (transition C) (pc, stk) (pc + length (compile_com stk vlist c), stk')
