@@ -845,8 +845,18 @@ Proof.
                 omega.
               }
             }
-        + intros. unfold t_update. assert ( i <> x
-    }     
+        + intros. unfold t_update.
+          assert ( neq: i <> x ).
+          { unfold not. intros. rewrite H3 in H2. rewrite E in H2. discriminate. }
+          destruct (beq_id x i) eqn:E''.
+          apply beq_id_true_iff in E''. subst. unfold not in neq. exfalso. auto.
+          destruct (H1 i) as [H1' H2']. auto.
+    }
+    {
+      simpl. exists stk.
+      split. rewrite Nat.add_0_r. apply star_refl.
+      unfold agree in H1.
+    }
   }
 Qed.
 
