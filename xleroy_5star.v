@@ -1,3 +1,4 @@
+
 Set Warnings "-notation-overridden,-parsing".
 From Coq Require Import Strings.String.
 From Coq Require Import Bool.Bool.
@@ -774,25 +775,33 @@ Definition test_prog3 :=
 
 Import ListNotations.
 Compute (compile_program test_prog3).                     
-  
+
+Fixpoint varlist_contains_all (c:com) (vlist : varlist) : Prop :=
+  match c with
+  | (c1 ;; c2) => (varlist_contains_all c1 vlist /\ varlist_contains_all c2 vlist)
+  | x ::= a => (exists n, find x vlist = Some n)
+  | _ => True
+  end.
+
 
 Lemma compile_com_correct_terminating:
-  forall (C:code) (c : com) (st st': state),
+  forall (c : com) (st st': state) (C:code) (stk:stack) (vlist:varlist) (pc:nat),
   c / st \\ st' ->
-  forall (stk:stack) (vlist:varlist) (pc:nat),
+    varlist_contains_all c vlist -> 
     codeseq_at C pc (compile_com stk vlist c) ->
     agree vlist stk st ->
   exists stk',
      star (transition C) (pc, stk) (pc + length (compile_com stk vlist c), stk')
      /\ agree vlist stk' st'.
 Proof.
-  intros.
+  (*intros C c st st' H stk vlist pc vlist_cont_all H0 H1.*)
   induction c.
   {
+    intros.
     exists stk. simpl. split. rewrite Nat.add_0_r. apply star_refl.
     inversion H. subst. assumption.
   }
-  {
+  { intros st st' C stk vlist pc H vlist_cont_all H0 H1. 
     unfold compile_com. simpl in H0.
     destruct (find (Id x) vlist) as [n | ] eqn:E.
     { 
@@ -845,8 +854,36 @@ Proof.
                 omega.
               }
             }
-        + intros. unfold t_update. assert ( i <> x
-    }     
+        + intros. destruct (beq_id x i) eqn:Eix.
+          {rewrite beq_id_true_iff in Eix. subst. rewrite E in H2. discriminate. }
+          {destruct (H1 i). unfold t_update. rewrite Eix. auto. }
+    }
+    {
+      unfold varlist_contains_all in *. destruct vlist_cont_all as [m contra].
+      rewrite contra in E. discriminate.
+    }
+  }
+
+  {
+    intros. destruct H0 as [H01 H02].
+    simpl in *. eexists.
+    split.
+    {
+      inversion H. subst.
+      pose (ih1 := IHc1 st st'0 C stk vlist pc H4 H01).
+      assert (H0 : codeseq_at C pc (compile_com stk vlist c1)). eauto with codeseq.
+      intros. destruct (ih1 H0 H2) as [stk' [gl ih1']].
+
+      eapply star_trans. apply gl.
+      pose (ih2 := IHc2 st'0 st' C stk' vlist
+                        (pc + Datatypes.length (compile_com stk vlist c1))
+                        H7 H02).
+      assert (H0' : codeseq_at C (pc + Datatypes.length (compile_com stk vlist c1))
+                               (compile_com stk' vlist c2)).
+      { eauto with codeseq. }
+                                                             
+      intros. destruct (ih2 H0' ih1') as [stk'' [gl' ih2']].
+    }
   }
 Qed.
 
