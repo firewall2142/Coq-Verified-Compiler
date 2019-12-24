@@ -11,6 +11,12 @@ Require Import Omega.
 (*From Coq Require Import omega.Omega.*)
 (*From Coq Require Import Init.Nat.*)
 
+Ltac normalize :=
+  repeat rewrite app_length in *;
+  repeat rewrite plus_assoc in *;
+  repeat rewrite plus_0_r in *;
+  simpl in *.
+
 (* ========== Maps  =========== *)
 Inductive id : Type :=
   | Id : string -> id.
@@ -250,7 +256,7 @@ Proof.
   intros. inversion H. repeat rewrite app_ass. rewrite <- app_ass. constructor. rewrite app_length. auto.
 Qed.
 
-Hint Resolve code_at_app codeseq_at_head codeseq_at_tail codeseq_at_app_left codeseq_at_app_right codeseq_at_app_right2: codeseq.
+Hint Resolve code_at_app codeseq_at_head codeseq_at_tail codeseq_at_app_left codeseq_at_app_right codeseq_at_app_right2 Nat.add_0_r Nat.add_1_r Nat.add_assoc Nat.add_comm :codeseq.
 
 
 (*<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><*)
@@ -412,7 +418,7 @@ Fixpoint compile_com (stklen : nat) (vlist: varlist) (c:com): code :=
   match c with
   | SKIP => nil
   | c1 ;; c2 => (compile_com stklen
-                   vlist c1) ++ (compile_com stk vlist c2)
+                   vlist c1) ++ (compile_com stklen vlist c2)
   | IFB b THEN ifso ELSE ifnot FI =>
     let code_ifso := compile_com stklen vlist ifso in
     let code_ifnot := compile_com stklen vlist ifnot in
@@ -431,7 +437,7 @@ Fixpoint compile_com (stklen : nat) (vlist: varlist) (c:com): code :=
             match find (Id var) vlist with
             | Some n =>
               compile_aexp stklen vlist a
-                           ++ Iset (length stk - length vlist + n) ::nil
+                           ++ Iset (stklen - length vlist + n) ::nil
             | _ => nil
             end
   end.
@@ -450,7 +456,7 @@ Fixpoint zerostk_of_len (n: nat) : stack :=
 Definition compile_program (p: com): code :=
   let vlist := gen_vlist p nil in
   initialize_vars vlist
-  ++ compile_com (zerostk_of_len (length vlist)) vlist p
+  ++ compile_com (length vlist) vlist p
   ++ Ihalt::nil.
 
 Definition test_prog0 := X ::= ANum 3;; Y ::= AId (Id X).
@@ -585,11 +591,12 @@ Qed.
 
 
 Definition agree (v : varlist) (stk : stack) (st : state) :=
-  forall i,
+  length stk = length v /\
+  (forall i,
     (forall n, find i v = Some n ->
                (get_nth_slot stk (length stk - length v + n) = Some (st i)) )
     /\
-    (find i v = None -> st i = O)
+    (find i v = None -> st i = O))
 .
 
 
@@ -651,6 +658,19 @@ Proof.
 
 Admitted.
 
+Print compile_com.
+(*
+
+Theorem compile_com_stklen : forall c C pc stk stk' vlist,
+    codeseq_at C pc (compile_com (length stk) vlist c) ->
+    star (transition C) (pc, stk)
+         (pc + (length (compile_com (length stk) vlist c)), stk') ->
+    length stk = length stk'vlist.
+Proof.
+  induction c.
+  
+Qed.*)
+
 
 (*<><><><><><><><><> HELPER END<><><><><><><><><><><*)
 
@@ -663,13 +683,14 @@ Fact agree_aeval (v : varlist) (stk : stack) (st: state) :
   forall (a:aexp),
     agree v stk st -> aeval st a = aeval_stk v stk a.
 Proof.
+(*
   intros.
   unfold agree in *.
   induction a.
   - simpl. reflexivity.
   - simpl. Check find_get_ofs.
     destruct (H i) as [H1 H2].
-    destruct (find i v) as [n | ] eqn:E.
+    destruct (find i v) as [n | ] eqn:E.*)
 Admitted.
 
 
@@ -753,7 +774,17 @@ Proof.
   (* DIY just replace trans_add*)
 Admitted.
 
-
+Lemma compile_bexp_correct:
+  forall (b:bexp) (C:code) (stk:stack) (pc:nat) (vlist:varlist) (cond:bool) (ofs:nat),
+  codeseq_at C pc (compile_bexp (length stk) vlist b cond ofs) ->
+  star (transition C)
+       (pc, stk)
+       (pc + length (compile_bexp (length stk) vlist b cond ofs) +
+        if eqb (beval_stk vlist stk b) cond then ofs else 0, stk).
+Proof.
+  intros.
+  admit.
+Admitted.
 
 Definition mach_terminates (C: code) (stk_init stk_fin: stack) :=
   exists pc,
@@ -778,29 +809,33 @@ Compute (compile_program test_prog3).
 Fixpoint varlist_contains_all (c:com) (vlist : varlist) : Prop :=
   match c with
   | (c1 ;; c2) => (varlist_contains_all c1 vlist /\ varlist_contains_all c2 vlist)
+  | IFB b THEN c1 ELSE c2 FI => (varlist_contains_all c1 vlist /\ varlist_contains_all c2 vlist)
+  | WHILE b DO c1 END => varlist_contains_all c1 vlist
+  | SKIP => True
   | x ::= a => (exists n, find x vlist = Some n)
-  | _ => True
   end.
 
 
 Lemma compile_com_correct_terminating:
   forall (c : com) (st st': state) (C:code) (stk:stack) (vlist:varlist) (pc:nat),
   c / st \\ st' ->
-    varlist_contains_all c vlist -> 
+    varlist_contains_all c vlist ->
     codeseq_at C pc (compile_com (length stk) vlist c) ->
     agree vlist stk st ->
   exists stk',
-     star (transition C) (pc, stk) (pc + length (compile_com stk vlist c), stk')
+     star (transition C) (pc, stk) (pc + length (compile_com (length stk) vlist c), stk')
      /\ agree vlist stk' st'.
 Proof.
   (*intros C c st st' H stk vlist pc vlist_cont_all H0 H1.*)
   induction c.
   {
+    (* SKIP *)
     intros.
     exists stk. simpl. split. rewrite Nat.add_0_r. apply star_refl.
     inversion H. subst. assumption.
   }
-  { intros st st' C stk vlist pc H vlist_cont_all H0 H1. 
+  { (* x ::= a *)
+    intros st st' C stk vlist pc H vlist_cont_all H0 H1. 
     unfold compile_com. simpl in H0.
     destruct (find (Id x) vlist) as [n | ] eqn:E.
     { 
@@ -813,8 +848,10 @@ Proof.
         rewrite plus_assoc. eapply trans_set. eauto with codeseq.
         rewrite <- (agree_aeval _ _ _ _ H1). assumption.
       - inversion H. subst. unfold agree in *.
+        destruct H1 as [h1 H1].
         assert (L : length stk = length stk').
         { eapply set_nth_length. apply Hstk'. }
+        split. rewrite <- L. assumption.
         intros. split.
         + intros.
           destruct (beq_id (Id x) i) eqn:idE.
@@ -863,25 +900,60 @@ Proof.
     }
   }
 
-  {
+  { (* c1 ;; c2 *)
     intros. destruct H0 as [H01 H02].
-    simpl in *. eexists.
+    simpl in *.
+    
+    inversion H. subst.
+    pose (ih1 := IHc1 st st'0 C stk vlist pc H4 H01).
+    assert (H0 : codeseq_at C pc (compile_com (length stk) vlist c1)).
+    { eauto with codeseq. }
+    destruct (ih1 H0 H2) as [stk' [gl ih1']].      
+    pose (ih2 := IHc2 st'0 st' C stk' vlist
+                      (pc + Datatypes.length (compile_com (length stk) vlist c1))
+                      H7 H02).
+    assert (L : length stk' = length stk). {
+        destruct H2. destruct ih1'. omega.
+    }
+    assert (H0' : codeseq_at C (pc + Datatypes.length (compile_com (length stk) vlist c1))
+                             (compile_com (length stk') vlist c2)).
+    { rewrite L. eauto with codeseq. }
+    
+      intros. destruct (ih2 H0' ih1') as [stk'' [gl' ih2']].
+    rewrite app_length. rewrite plus_assoc. rewrite L in gl'.
+    exists stk''.
     split.
     {
-      inversion H. subst.
-      pose (ih1 := IHc1 st st'0 C stk vlist pc H4 H01).
-      assert (H0 : codeseq_at C pc (compile_com stk vlist c1)). eauto with codeseq.
-      intros. destruct (ih1 H0 H2) as [stk' [gl ih1']].
+      eapply star_trans.
+      apply gl.
+      apply gl'.
+    }
+    {
+      assumption.
+    }
+  }
+  { (*IFB b THEN c1 ELSE c2*)
+    intros. simpl in *.
+    simpl in H0, H1. destruct H0 as [vlall1 vlall2].
+    inversion H; subst.
+    {
+      eexists. split.
+      { (*beval b = true*)
+        
+        eapply star_trans. apply compile_bexp_correct. eauto with codeseq.
+        rewrite <- (agree_beval _ _ _ b H2). rewrite H7. simpl.
+        eapply star_trans.
+        {
+          set (code_test := (compile_bexp (Datatypes.length stk) vlist b false
+                                          (Datatypes.length (compile_com (Datatypes.length stk) vlist c1) + 1))) in *.
+          normalize.
+          pose (ih1 := IHc1 st st' C stk vlist (pc+ length code_test) H8).
+        }
+      }
+      (*pose (ih1 := IHc1 _ _ C stk _ _ H8 vlall1 ()
+    }
+    {
 
-      eapply star_trans. apply gl.
-      pose (ih2 := IHc2 st'0 st' C stk' vlist
-                        (pc + Datatypes.length (compile_com stk vlist c1))
-                        H7 H02).
-      assert (H0' : codeseq_at C (pc + Datatypes.length (compile_com stk vlist c1))
-                               (compile_com stk' vlist c2)).
-      { eauto with codeseq. }
-                                                             
-      intros. destruct (ih2 H0' ih1') as [stk'' [gl' ih2']].
     }
   }
 Qed.
