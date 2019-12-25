@@ -15,6 +15,16 @@ Ltac normalize :=
   repeat rewrite app_length in *;
   repeat rewrite plus_assoc in *;
   repeat rewrite plus_0_r in *;
+  repeat rewrite Nat.sub_0_r in *;
+  simpl in *.
+
+Ltac normalize2 :=
+  repeat rewrite app_length in *;
+  repeat rewrite plus_assoc in *;
+  repeat rewrite plus_0_r in *;
+  repeat rewrite Nat.sub_0_r in *;
+  repeat rewrite Nat.add_1_r in *;
+  repeat rewrite Nat.add_0_r in *;
   simpl in *.
 
 (* ========== Maps  =========== *)
@@ -563,12 +573,17 @@ Proof.
       intros. discriminate.
 Qed.
 
-Theorem find_get_ofs: forall i vlist n stk,
+Theorem find_get_ofs: forall (i:id) vlist n stk,
+    length stk >= length vlist ->
     find i vlist = Some n ->
     exists m,
       get_nth_slot stk (length stk - length vlist + n) = Some m.
 Proof.
-Admitted.
+  intros.
+  apply find_list_length in H0.
+  apply get_nth_success.
+  omega.
+Qed.
 
 
 Theorem set_nth_success:
@@ -600,54 +615,95 @@ Definition agree (v : varlist) (stk : stack) (st : state) :=
 .
 
 
-Theorem agree_length_prop : forall vl stk st,
-    agree vl stk st -> length stk >= length vl.
-Proof.
-  induction vl.
-  - intros. simpl. omega.
-  - intros.
-Admitted.
-
 Theorem get_set_eq : forall pos l l' val,
     set_nth_slot l pos val = Some l' ->
     get_nth_slot l' pos = Some val.
 Proof.
-  (* Can't prove these for some reason *)
-Admitted.
+  induction pos.
+  - destruct l.
+    + discriminate.
+    + intros. simpl in H. inversion H. subst. reflexivity.
+  - intros. destruct l; try discriminate.
+    simpl in H.
+    destruct (set_nth_slot l pos val) eqn:E; try discriminate.
+    inversion H. simpl. eapply IHpos. apply E.
+Qed.
 
-Theorem get_other_set : forall n n' l l' val,
+Theorem get_other_set : forall val l' l n' n,
     set_nth_slot l n val = Some l' ->
     n' <> n ->
     get_nth_slot l' n' = get_nth_slot l n'.
 Proof.
-  (*Similar to previous *)
-Admitted.
+  induction l'.
+  - intros. induction l. reflexivity.
+    simpl in *. destruct n. discriminate.
+    destruct (set_nth_slot l n val); discriminate.
+  - intros.
+    destruct l. {simpl in *. discriminate. }
+    destruct n.
+    + simpl in H. inversion H. subst.
+      destruct n'. omega.
+      simpl. reflexivity.
+    + simpl in H.
+      destruct (set_nth_slot l n val) eqn:E; try discriminate.
+      inversion H. subst.
+      destruct n'.
+      * simpl. reflexivity.
+      * simpl. eapply IHl'. apply E.
+        omega.
+Qed.
 
-Fact set_nth_length: forall stk stk' p v,
+Fact set_nth_length: forall stk' stk p v,
     set_nth_slot stk p v = Some stk' ->
     length stk = length stk'.
 Proof.
-Admitted.
-  
-Fact stk_vlist_find_length :
-  forall stk n vlist i st,
-    find i vlist = Some n -> agree vlist stk st ->
-    length stk - length vlist + n < length stk.
-Proof.
-  intros.
-  pose (E1 := agree_length_prop _ _ _ H0).
-  pose (E2 := find_list_length _ _ _ H).
-  omega.
+  induction stk'.
+  - intros. simpl in H.
+    destruct stk; simpl in *. discriminate.
+    destruct p. discriminate. destruct (set_nth_slot stk p v); discriminate.
+  - intros. destruct stk.
+    + simpl in *. discriminate.
+    + simpl. destruct p; simpl in *. inversion H. subst. reflexivity.
+      destruct (set_nth_slot stk p v) eqn:E; try discriminate.
+      inversion H. subst. eauto.
 Qed.
 
-
 Theorem find_inj :
-  forall vl x y n,
+  forall x y vl n,
     find x vl = Some n ->
     (find y vl = find x vl <-> x = y).
 Proof.
-
-Admitted.
+  induction vl.
+  {intros. split; intros; simpl in *; discriminate. }
+  intros. split;intros.
+  destruct (beq_id a x) eqn:E.
+  - simpl in H. remember E as t. unfold beq_id in t. rewrite t in H.
+    inversion H. clear Heqt t. rewrite beq_id_true_iff in E. subst.
+    simpl in H0. rewrite string_dec_refl in H0.
+    destruct (beq_id a y) eqn:E.
+    + apply beq_id_true_iff in E. assumption.
+    + unfold beq_id in E. rewrite E in H0. destruct (find y vl); discriminate.
+  - destruct x as [ x'].
+    unfold beq_id in E.
+    destruct (beq_id a y) eqn:E'.
+    + apply beq_id_true_iff in E'. rewrite H in H0.
+      destruct y as [y'].
+      simpl in H0. inversion E'. clear E'.
+      rewrite H2 in H0. rewrite string_dec_refl in H0. inversion H0.
+      subst.
+      simpl in H.
+      destruct (if string_dec y' x' then true else false); try discriminate.
+      destruct (find x' vl); discriminate.
+    + destruct (if string_dec a x' then true else false) eqn:Ex; try discriminate.
+      * clear E. destruct y  as [y']. unfold beq_id in E'.
+        rewrite H in H0. simpl in H, H0. rewrite Ex in H. rewrite E' in H0.
+        destruct (find x' vl); try discriminate.
+        destruct (find y' vl); try discriminate.
+        inversion H. inversion H0.
+        eapply IHvl. destruct n. discriminate.
+        auto. rewrite <- H2 in H3. auto.
+  - subst. reflexivity.
+Qed.
 
 Theorem find_inj2 :
   forall vl x y n1 n2,
@@ -655,23 +711,81 @@ Theorem find_inj2 :
     find y vl = Some n2 ->
     (x = y <-> n1 = n2).
 Proof.
+  intros. split; intros.
+  - subst. rewrite H in H0. inversion H0. reflexivity.
+  - pose (Inj := find_inj _ y _ _ H).
+    rewrite <- Inj. rewrite <- H1 in H0. rewrite H0. auto.
+Qed.
 
-Admitted.
 
-Print compile_com.
-(*
-
-Theorem compile_com_stklen : forall c C pc stk stk' vlist,
-    codeseq_at C pc (compile_com (length stk) vlist c) ->
-    star (transition C) (pc, stk)
-         (pc + (length (compile_com (length stk) vlist c)), stk') ->
-    length stk = length stk'vlist.
+Theorem aeval_stk_appended: forall (v : varlist) (a:aexp) (stk: stack) (s : nat) ,
+    length v <= length stk ->
+    aeval_stk v stk a = aeval_stk v (s::stk) a.
 Proof.
-  induction c.
-  
-Qed.*)
+  assert (G: forall (n s:nat) stk (v:varlist),
+             length stk >= length v ->
+             get_nth_slot (s :: stk) (length (s :: stk) - length v + n)
+             =
+             get_nth_slot stk (length stk - length v + n)). 
+  {
+    intros.
+    assert (t: length (s::stk) - length v = S (length stk - length v)).
+    { simpl. destruct (length v). omega. omega. }
+    rewrite t.
+    simpl. reflexivity.
+  }
 
-
+  induction a.
+  - simpl. reflexivity.
+  - intros. unfold aeval_stk.
+    destruct (find i v) eqn:E; try auto.
+    rewrite G. reflexivity. omega.
+  - intros. simpl. rewrite (IHa1 stk s H).
+    cut (aeval_stk v (aeval_stk v (s :: stk) a1 :: stk) a2 =
+         aeval_stk v (aeval_stk v (s :: stk) a1 :: s ::  stk) a2). omega.
+    assert (P1: aeval_stk v (s :: stk) a2 = aeval_stk v stk a2).
+    { symmetry. auto.  }
+    assert (P2: aeval_stk v (s :: stk) a2
+                =
+                aeval_stk v (aeval_stk v (s :: stk) a1 :: s :: stk) a2).
+    { apply IHa2. simpl. omega. }
+    
+    assert (P3: aeval_stk v (stk) a2
+                =
+                aeval_stk v (aeval_stk v (s :: stk) a1 :: stk) a2).
+    { apply IHa2. simpl. omega. }
+    omega.
+  - intros. simpl. rewrite (IHa1 stk s H).
+    cut (aeval_stk v (aeval_stk v (s :: stk) a1 :: stk) a2 =
+         aeval_stk v (aeval_stk v (s :: stk) a1 :: s ::  stk) a2). omega.
+    assert (P1: aeval_stk v (s :: stk) a2 = aeval_stk v stk a2).
+    { symmetry. auto.  }
+    assert (P2: aeval_stk v (s :: stk) a2
+                =
+                aeval_stk v (aeval_stk v (s :: stk) a1 :: s :: stk) a2).
+    { apply IHa2. simpl. omega. }
+    assert (P3: aeval_stk v (stk) a2
+                =
+                aeval_stk v (aeval_stk v (s :: stk) a1 :: stk) a2).
+    { apply IHa2. simpl. omega. }
+    omega.
+  - intros. simpl. rewrite (IHa1 stk s H).
+    cut (aeval_stk v (aeval_stk v (s :: stk) a1 :: stk) a2 =
+         aeval_stk v (aeval_stk v (s :: stk) a1 :: s ::  stk) a2).
+    intros.
+    rewrite H0. reflexivity.
+    assert (P1: aeval_stk v (s :: stk) a2 = aeval_stk v stk a2).
+    { symmetry. auto.  }
+    assert (P2: aeval_stk v (s :: stk) a2
+                =
+                aeval_stk v (aeval_stk v (s :: stk) a1 :: s :: stk) a2).
+    { apply IHa2. simpl. omega. }
+    assert (P3: aeval_stk v (stk) a2
+                =
+                aeval_stk v (aeval_stk v (s :: stk) a1 :: stk) a2).
+    { apply IHa2. simpl. omega. }
+    omega.  
+Qed.
 (*<><><><><><><><><> HELPER END<><><><><><><><><><><*)
 
 
@@ -683,19 +797,28 @@ Fact agree_aeval (v : varlist) (stk : stack) (st: state) :
   forall (a:aexp),
     agree v stk st -> aeval st a = aeval_stk v stk a.
 Proof.
-(*
-  intros.
-  unfold agree in *.
-  induction a.
-  - simpl. reflexivity.
-  - simpl. Check find_get_ofs.
-    destruct (H i) as [H1 H2].
-    destruct (find i v) as [n | ] eqn:E.*)
-Admitted.
+  unfold agree.
+  induction a; intros; destruct H.
+  - reflexivity.
 
+  - simpl. destruct (H0 i).
+    destruct (find i v) eqn:E.
+    rewrite H1. auto. auto. auto.
+    
+  - simpl. rewrite IHa1. rewrite IHa2.
+    simpl. rewrite <- aeval_stk_appended. reflexivity. omega.
+    split. omega. intros. auto. auto.
 
+  - simpl. rewrite IHa1. rewrite IHa2.
+    simpl. rewrite <- aeval_stk_appended. reflexivity. omega.
+    split. omega. intros. auto. auto.
 
+  - simpl. rewrite IHa1. rewrite IHa2.
+    simpl. rewrite <- aeval_stk_appended. reflexivity. omega.
+    split. omega. intros. auto. auto.
 
+Qed.
+  
 Fact agree_beval (v : varlist) (stk : stack) (st: state) :
   forall (b:bexp),
     agree v stk st -> beval st b = beval_stk v stk b.
@@ -742,49 +865,140 @@ Inductive ceval : com -> state -> state -> Prop :=
 
 Lemma compile_aexp_correct:
   forall (a:aexp) (C:code) (stk:stack) (pc:nat) (vlist:varlist),
+    forall (ineq : length stk >= length vlist), 
     codeseq_at C pc (compile_aexp (length stk) vlist a) ->
     star (transition C) (pc, stk)
          (pc + length(compile_aexp (length stk) vlist a),
           (aeval_stk vlist stk a)::stk).
 Proof.
   induction a.
-  { intros. apply star_one. apply trans_const. eauto with codeseq. }
-  {
-    intros.
+  - intros. apply star_one. apply trans_const. eauto with codeseq. 
+  - intros.
     apply star_one.
     simpl in *.
     destruct (find i vlist) as [| n] eqn:E.
-    - simpl. eapply trans_get. eauto with codeseq.
-      Check find_get_ofs.
-      destruct (find_get_ofs _ _ _ stk E) as [m mH].
+    + simpl. eapply trans_get. eauto with codeseq.
+      
+      destruct (find_get_ofs _ _ _  stk ineq E) as [m mH].
       rewrite mH. reflexivity.
-    - simpl. apply trans_const. eauto with codeseq.
-  }
-  {
-    intros. simpl. eapply star_trans.
-    apply (IHa1 C stk pc vlist). eauto with codeseq.
-    eapply star_trans. apply (IHa2 _ _ _ vlist). simpl in H.
+    + simpl. apply trans_const. eauto with codeseq.
+  
+  - intros. simpl. eapply star_trans.
+    apply (IHa1 C stk pc vlist ineq). eauto with codeseq.
+    eapply star_trans. apply (IHa2 _ _ _ vlist). simpl. omega. simpl in H.
     rewrite plus_comm in H. simpl in H. eauto with codeseq.
     apply star_one. repeat (rewrite app_length || simpl).
     rewrite plus_assoc. rewrite (Nat.add_1_r (length stk)).
     rewrite plus_assoc with (p := 1).
     apply trans_add. simpl in H. rewrite Nat.add_1_r in H. eauto with codeseq.
-  }
-
-  (* DIY just replace trans_add*)
-Admitted.
+  - intros. simpl. eapply star_trans.
+    apply (IHa1 C stk pc vlist ineq). eauto with codeseq.
+    eapply star_trans. apply (IHa2 _ _ _ vlist). simpl. omega. simpl in H.
+    rewrite plus_comm in H. simpl in H. eauto with codeseq.
+    apply star_one. repeat (rewrite app_length || simpl).
+    rewrite plus_assoc. rewrite (Nat.add_1_r (length stk)).
+    rewrite plus_assoc with (p := 1).
+    apply trans_sub. simpl in H. rewrite Nat.add_1_r in H. eauto with codeseq.
+  - intros. simpl. eapply star_trans.
+    apply (IHa1 C stk pc vlist ineq). eauto with codeseq.
+    eapply star_trans. apply (IHa2 _ _ _ vlist). simpl. omega. simpl in H.
+    rewrite plus_comm in H. simpl in H. eauto with codeseq.
+    apply star_one. repeat (rewrite app_length || simpl).
+    rewrite plus_assoc. rewrite (Nat.add_1_r (length stk)).
+    rewrite plus_assoc with (p := 1).
+    apply trans_mul. simpl in H. rewrite Nat.add_1_r in H. eauto with codeseq.
+  
+Qed.
 
 Lemma compile_bexp_correct:
   forall (b:bexp) (C:code) (stk:stack) (pc:nat) (vlist:varlist) (cond:bool) (ofs:nat),
-  codeseq_at C pc (compile_bexp (length stk) vlist b cond ofs) ->
+    length stk >= length vlist ->
+    codeseq_at C pc (compile_bexp (length stk) vlist b cond ofs) ->
   star (transition C)
        (pc, stk)
        (pc + length (compile_bexp (length stk) vlist b cond ofs) +
         if eqb (beval_stk vlist stk b) cond then ofs else 0, stk).
 Proof.
-  intros.
-  admit.
-Admitted.
+  induction b.
+  - simpl in *. intros. destruct cond eqn:E.
+    apply star_one. eapply trans_branch_forward. eauto with codeseq.
+    simpl. auto. simpl. normalize. apply star_refl.
+  - simpl in *. intros. destruct cond; simpl.
+    normalize. apply star_refl.
+    apply star_one. eapply trans_branch_forward. eauto with codeseq. auto.
+  - intros. simpl in *.
+    destruct cond.
+    + simpl. eapply star_trans. apply compile_aexp_correct. apply H. eauto with codeseq.
+      eapply star_trans. apply compile_aexp_correct. simpl.
+      cut( S (Datatypes.length stk) >= Datatypes.length vlist). intros. apply H1. omega.
+      simpl. rewrite Nat.add_1_r in H0. eauto with codeseq. normalize.
+      apply star_one. eapply trans_beq. rewrite Nat.add_1_r in *. eauto with codeseq.
+      pose (av := aeval_stk_appended vlist a0 stk (aeval_stk vlist stk a)).
+      rewrite <- av.
+      destruct (aeval_stk vlist stk a =? aeval_stk vlist stk a0) eqn:E;
+        simpl; normalize2; reflexivity. omega.
+    + simpl. eapply star_trans. apply compile_aexp_correct. apply H. eauto with codeseq.
+      eapply star_trans. apply compile_aexp_correct. simpl.
+      cut( S (Datatypes.length stk) >= Datatypes.length vlist). intros. apply H1. omega.
+      simpl. rewrite Nat.add_1_r in H0. eauto with codeseq. normalize.
+      apply star_one. eapply trans_bne. rewrite Nat.add_1_r in *. eauto with codeseq.
+      pose (av := aeval_stk_appended vlist a0 stk (aeval_stk vlist stk a)).
+      rewrite <- av.
+      destruct (aeval_stk vlist stk a =? aeval_stk vlist stk a0) eqn:E;
+        simpl; normalize2; reflexivity. omega.
+  - intros. simpl in *.
+    destruct cond.
+    + simpl. eapply star_trans. apply compile_aexp_correct. apply H. eauto with codeseq.
+      eapply star_trans. apply compile_aexp_correct. simpl.
+      cut( S (Datatypes.length stk) >= Datatypes.length vlist). intros. apply H1. omega.
+      simpl. rewrite Nat.add_1_r in H0. eauto with codeseq. normalize.
+      apply star_one. eapply trans_ble. rewrite Nat.add_1_r in *. eauto with codeseq.
+      pose (av := aeval_stk_appended vlist a0 stk (aeval_stk vlist stk a)).
+      rewrite <- av.
+      destruct (aeval_stk vlist stk a <=? aeval_stk vlist stk a0) eqn:E;
+        simpl; normalize2; reflexivity. omega.
+    + simpl. eapply star_trans. apply compile_aexp_correct. apply H. eauto with codeseq.
+      eapply star_trans. apply compile_aexp_correct. simpl.
+      cut( S (Datatypes.length stk) >= Datatypes.length vlist). intros. apply H1. omega.
+      simpl. rewrite Nat.add_1_r in H0. eauto with codeseq. normalize.
+      apply star_one. eapply trans_bgt. rewrite Nat.add_1_r in *. eauto with codeseq.
+      pose (av := aeval_stk_appended vlist a0 stk (aeval_stk vlist stk a)).
+      rewrite <- av.
+      destruct (aeval_stk vlist stk a <=? aeval_stk vlist stk a0) eqn:E;
+        simpl; normalize2; reflexivity. omega.
+  - intros. simpl in *. eapply star_trans. apply IHb. apply H. eauto with codeseq.
+    destruct cond; simpl; destruct (beval_stk vlist stk b); simpl; apply star_refl. 
+  - intros. simpl in *.
+    destruct cond; normalize2.
+    + eapply star_trans. apply IHb1. apply H. eauto with codeseq.
+      destruct (beval_stk vlist stk b1); normalize2; try apply star_refl.
+      apply IHb2. auto. eauto with codeseq.
+    + eapply star_trans. apply IHb1. apply H. eauto with codeseq.
+      destruct (beval_stk vlist stk b1);repeat normalize2.
+      * apply IHb2. auto. eauto with codeseq. 
+      * set (pc1 := (pc +
+                     Datatypes.length
+                       (compile_bexp (Datatypes.length stk) vlist b1 false
+                                     (ofs + Datatypes.length
+                                              (compile_bexp (Datatypes.length stk)
+                                                            vlist b2 false ofs))) +
+                     ofs + Datatypes.length (compile_bexp (Datatypes.length stk) vlist
+                                                          b2 false ofs)))
+          in *.
+        set (pc2 := (pc +
+                     Datatypes.length
+                       (compile_bexp (Datatypes.length stk) vlist b1 false
+                                     (ofs + Datatypes.length
+                                              (compile_bexp (Datatypes.length stk)
+                                                            vlist b2 false ofs))) +
+                     Datatypes.length (compile_bexp (Datatypes.length stk)
+                                                    vlist b2 false ofs) + ofs))
+          in *.
+        assert (H' : pc1 = pc2).
+        { unfold pc1, pc2. omega.  }
+        rewrite H'.
+        apply star_refl.
+Qed.
 
 Definition mach_terminates (C: code) (stk_init stk_fin: stack) :=
   exists pc,
@@ -828,11 +1042,8 @@ Lemma compile_com_correct_terminating:
      star (transition C) (pc, stk) (pc + length (compile_com (length stk) vlist c), stk')
      /\ agree vlist stk' st'.
 Proof.
-  (*intros C c st st' H stk vlist pc vlist_cont_all H0 H1.*)
-
   induction 1.
   {
-    (* SKIP *)
     intros.
     exists stk. simpl. split. rewrite Nat.add_0_r. apply star_refl.
     inversion H. subst. assumption.
@@ -849,7 +1060,11 @@ Proof.
     eexists. simpl. normalize. rewrite H0 in *.
     split.
     {
-      eapply star_trans. apply compile_aexp_correct. eauto with codeseq.
+      eapply star_trans. apply compile_aexp_correct.
+      Search "ge".
+      assert (lenIneq : length stk >= length vlist). omega.
+      apply lenIneq.
+      eauto with codeseq.
       apply star_one. normalize. eapply trans_set. eauto with codeseq.
       rewrite H2. rewrite Nat.sub_diag. simpl.
       Search "aeval".
@@ -1038,294 +1253,3 @@ Proof.
     apply ihc.
   }
 Qed.
-
-
-Lemma compile_com_correct_terminating:
-  forall (c : com) (st st': state) (C:code) (stk:stack) (vlist:varlist) (pc:nat),
-  c / st \\ st' ->
-    varlist_contains_all c vlist ->
-    codeseq_at C pc (compile_com (length stk) vlist c) ->
-    agree vlist stk st ->
-  exists stk',
-     star (transition C) (pc, stk) (pc + length (compile_com (length stk) vlist c), stk')
-     /\ agree vlist stk' st'.
-Proof.
-  (*intros C c st st' H stk vlist pc vlist_cont_all H0 H1.*)
-  induction c.
-  {
-    (* SKIP *)
-    intros.
-    exists stk. simpl. split. rewrite Nat.add_0_r. apply star_refl.
-    inversion H. subst. assumption.
-  }
-  { (* x ::= a *)
-    intros st st' C stk vlist pc H vlist_cont_all H0 H1.
-    unfold compile_com. simpl in H0.
-    destruct (find (Id x) vlist) as [n | ] eqn:E.
-    { 
-      pose (E' := stk_vlist_find_length _ _ _ _ st E H1).
-      destruct (set_nth_success _ _ (aeval st a) E') as [stk' Hstk'].
-      exists stk'. simpl in H0.
-      split.
-      - eapply star_trans. apply compile_aexp_correct. eauto with codeseq.
-        rewrite app_length. simpl. apply star_one.
-        rewrite plus_assoc. eapply trans_set. eauto with codeseq.
-        rewrite <- (agree_aeval _ _ _ _ H1). assumption.
-      - inversion H. subst. unfold agree in *.
-        destruct H1 as [h1 H1].
-        assert (L : length stk = length stk').
-        { eapply set_nth_length. apply Hstk'. }
-        split. rewrite <- L. assumption.
-        intros. split.
-        + intros.
-          destruct (beq_id (Id x) i) eqn:idE.
-          * unfold t_update. rewrite idE. apply beq_id_true_iff in idE.
-            intros. subst. rewrite E in H2. inversion H2. subst.
-            apply get_set_eq with stk.
-            rewrite <- L.
-            assumption.
-          * simpl in idE.
-            destruct ( n0 =? n) eqn:En.
-            {
-              rewrite Nat.eqb_eq in En. subst.
-              eapply get_set_eq. rewrite <- L.
-              rewrite <- E in H2. eapply (find_inj _ _ _ _ E) in H2.
-              subst. rewrite string_dec_refl in idE. discriminate.
-            }
-            {
-              rewrite Nat.eqb_neq in En.
-              Check find_inj2.
-              pose (t := find_inj2 _ _ _ _ _ H2 E).
-              rewrite <- t in En.
-              unfold t_update.
-              destruct (beq_id x i) eqn:En'.
-              {
-                apply beq_id_true_iff in En'.
-                unfold not in En. exfalso. auto.
-              }
-              {
-                rewrite <- L.
-                Check get_other_set.
-                destruct (H1 i) as [H1'].
-                rewrite <- (H1' n0 H2).
-                eapply get_other_set. apply Hstk'.
-                unfold not in En.
-                rewrite t in En.
-                omega.
-              }
-            }
-        + intros. destruct (beq_id x i) eqn:Eix.
-          {rewrite beq_id_true_iff in Eix. subst. rewrite E in H2. discriminate. }
-          {destruct (H1 i). unfold t_update. rewrite Eix. auto. }
-    }
-    {
-      unfold varlist_contains_all in *. destruct vlist_cont_all as [m contra].
-      rewrite contra in E. discriminate.
-    }
-  }
-
-  { (* c1 ;; c2 *)
-    intros. destruct H0 as [H01 H02].
-    simpl in *.
-    
-    inversion H. subst.
-    pose (ih1 := IHc1 st st'0 C stk vlist pc H4 H01).
-    assert (H0 : codeseq_at C pc (compile_com (length stk) vlist c1)).
-    { eauto with codeseq. }
-    destruct (ih1 H0 H2) as [stk' [gl ih1']].      
-    pose (ih2 := IHc2 st'0 st' C stk' vlist
-                      (pc + Datatypes.length (compile_com (length stk) vlist c1))
-                      H7 H02).
-    assert (L : length stk' = length stk). {
-        destruct H2. destruct ih1'. omega.
-    }
-    assert (H0' : codeseq_at C (pc + Datatypes.length (compile_com (length stk) vlist c1))
-                             (compile_com (length stk') vlist c2)).
-    { rewrite L. eauto with codeseq. }
-    
-      intros. destruct (ih2 H0' ih1') as [stk'' [gl' ih2']].
-    rewrite app_length. rewrite plus_assoc. rewrite L in gl'.
-    exists stk''.
-    split.
-    {
-      eapply star_trans.
-      apply gl.
-      apply gl'.
-    }
-    {
-      assumption.
-    }
-  }
-  { (*IFB b THEN c1 ELSE c2*)
-    intros. simpl in *.
-    simpl in H0, H1. destruct H0 as [vlall1 vlall2].
-
-    set (code_test := (compile_bexp (Datatypes.length stk) vlist b false
-                                    (Datatypes.length
-                                       (compile_com (Datatypes.length stk) vlist c1) + 1)))
-      in *.
-    set (code_ifso := compile_com (length stk) vlist c1).
-    set (code_ifnot := compile_com (length stk) vlist c2).
-    
-    inversion H; subst.
-    - (* beval = true *)
-      normalize.
-      assert (C1 : codeseq_at C (pc + Datatypes.length code_test)
-                              (compile_com (Datatypes.length stk) vlist c1)).
-      { eauto with codeseq. }
-      pose (ih1 := IHc1 st st' C stk vlist (pc+ length code_test) H8 vlall1 C1 H2).
-      destruct ih1 as [stk' [ih1 ih1']].
-      
-      eexists. split.
-      { 
-        
-        eapply star_trans. apply compile_bexp_correct. eauto with codeseq.
-        rewrite <- (agree_beval _ _ _ b H2). rewrite H7. simpl.
-        
-        eapply star_trans.
-        { fold code_test. normalize. apply ih1. }
-        { apply star_one. eapply trans_branch_forward.
-          eauto with codeseq. unfold code_ifnot, code_ifso. omega. }
-      }
-      { assumption. }
-    - (*beval b = false *)
-      fold code_test code_ifso code_ifnot in H1 |- *.
-      normalize.
-      assert (C2: codeseq_at C (pc + length code_test + length code_ifso + 1) code_ifnot).
-      { eauto with codeseq. }
-      pose (ih2 := IHc2 st st' C stk vlist _ H8 vlall2 C2 H2).
-      destruct ih2 as [stk' [ih2 ih2']].
-      
-      eexists. split.
-      {
-        eapply star_trans. apply compile_bexp_correct. eauto with codeseq.
-        rewrite <- (agree_beval _ _ _ b H2). rewrite H7. simpl.
-        fold code_test code_ifso code_ifnot in ih2 |- *.
-        
-        rewrite <- Nat.add_1_l with (length code_ifnot). normalize.
-        apply ih2.
-      }
-      { assumption.  }
-  }
-  { (* WHILE b DO c END *)
-    simpl in *. intros.
-    set (code_body := compile_com (Datatypes.length stk) vlist c) in *.
-    set (code_test := compile_bexp (Datatypes.length stk) vlist b false
-                                   (Datatypes.length code_body + 1)) in *.
-    assert (Cb : codeseq_at C (pc + length code_test)
-                             (compile_com (Datatypes.length stk) vlist c)).
-    { eauto with codeseq. }
-    assert (Ct : codeseq_at C pc (compile_bexp (Datatypes.length stk) vlist b false
-                                               (Datatypes.length code_body + 1))).
-    { eauto with codeseq. }
-    
-    pose (jump:= compile_bexp_correct  _ _ _ _ _ _ _ Ct).
-    rewrite <- (agree_beval _ _ _ b H2) in jump.
-    inversion H; subst.
-    {
-      eexists.
-      split. 2 : apply H2.
-      normalize.
-      rewrite H7 in jump. simpl in jump. normalize.
-      fold code_test in jump. assumption.
-    }
-    {
-      destruct (IHc _ _ _ _ _ _ H6 H0 Cb H2) as [stk' [ih ih']].
-      eexists.
-      split.
-      {
-        unfold code_test.
-        normalize.
-        rewrite H5 in jump. simpl in jump.
-        eapply star_trans. apply jump. normalize.
-  
-        fold code_test code_body in ih |- *.
-        eapply star_trans. apply ih.
-        inversion H9.
-        apply star_one.
-        Check trans_branch_backward.
-        eapply trans_branch_backward
-      }
-    }
-  }
-Qed.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(*
-Theorem compile_program_correct_terminating:
-  forall c st,
-    c / empty_state \\ st ->
-    exists stk,
-      mach_terminates (compile_program c) nil stk
-      /\ True.
-Proof.
-  intros c st H.
-  induction H.
-  {
-    unfold mach_terminates.
-    exists nil.
-    split. 2 : { exact I. }
-    exists 0. split. trivial.
-    apply star_refl.
-  }
-  {
-    exists ((aeval st a1) :: nil).
-    split. 2:{ exact I. }
-    unfold mach_terminates.
-    exists (length(compile_program (x ::= a1)) - 1).
-    split.
-    - unfold compile_program. simpl. rewrite string_dec_refl.
-      rewrite app_length. simpl.
-      rewrite Nat.add_1_r. simpl. eauto with codeseq.
-    - unfold compile_program. unfold gen_vlist. simpl. rewrite string_dec_refl.
-      eapply star_trans. apply star_one. apply trans_const. simpl. auto.
-      
-  }
-  (*
-  {
-    unfold mach_terminates.
-    exists (aeval empty_state a1 :: nil).
-    split. 2 : { trivial. } 
-    exists (length (Iconst 0::nil ++ compile_aexp 1 (x::nil) a1 ++ Iset 0 ::nil)).
-    split.
-    - unfold compile_program. simpl. rewrite string_dec_refl. auto with codeseq.
-    - unfold compile_program. unfold gen_vlist. simpl. rewrite string_dec_refl.
-      eapply star_trans. apply star_one. apply trans_const. reflexivity.
-      repeat rewrite app_length. simpl.
-      Check compile_aexp_correct.
-  }*)
-  
-    
-             
-
-                                               
-            
-          
-
-            
-          
-          
-          
