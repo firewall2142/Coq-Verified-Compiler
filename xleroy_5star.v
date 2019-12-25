@@ -816,6 +816,208 @@ Fixpoint varlist_contains_all (c:com) (vlist : varlist) : Prop :=
   end.
 
 
+
+Lemma compile_com_correct_terminating:
+  forall (c : com) (st st': state),
+    c / st \\ st' ->
+    forall (C:code) (stk:stack) (vlist:varlist) (pc:nat),
+    varlist_contains_all c vlist ->
+    codeseq_at C pc (compile_com (length stk) vlist c) ->
+    agree vlist stk st ->
+  exists stk',
+     star (transition C) (pc, stk) (pc + length (compile_com (length stk) vlist c), stk')
+     /\ agree vlist stk' st'.
+Proof.
+  (*intros C c st st' H stk vlist pc vlist_cont_all H0 H1.*)
+
+  induction 1.
+  {
+    (* SKIP *)
+    intros.
+    exists stk. simpl. split. rewrite Nat.add_0_r. apply star_refl.
+    inversion H. subst. assumption.
+  }
+  {
+    intros. simpl in H0. destruct H0 as [m H0].
+    remember H2 as ag.
+    destruct H2 as [H2 H2'].
+    
+    assert (Nstk : exists stk', set_nth_slot stk m n = Some stk').
+    { apply set_nth_success. rewrite H2. eapply find_list_length. eauto. }
+    destruct Nstk as [stk' Nstk].
+    
+    eexists. simpl. normalize. rewrite H0 in *.
+    split.
+    {
+      eapply star_trans. apply compile_aexp_correct. eauto with codeseq.
+      apply star_one. normalize. eapply trans_set. eauto with codeseq.
+      rewrite H2. rewrite Nat.sub_diag. simpl.
+      Search "aeval".
+      rewrite <- (agree_aeval _ _ _ a1 ag). rewrite H. apply Nstk.
+    }
+    {
+      
+      
+      Search "set_".
+      assert (f: length stk' = length vlist).
+      {
+        rewrite <- H2.
+        symmetry.
+        eapply set_nth_length with (stk' := stk'). apply Nstk.
+      }
+      unfold agree. split. assumption.
+      intros. split.
+      - intros. unfold t_update.
+        destruct (H2' i) as [h2 h2'].
+        destruct (beq_id x i) eqn:E. try apply beq_id_true_iff in E. 
+        + rewrite <- E in H3. rewrite H0 in H3. inversion H3. rewrite <- H5.
+          Search "get_set".
+          eapply get_set_eq. rewrite f. rewrite Nat.sub_diag. simpl.
+          apply Nstk.
+        + rewrite f. rewrite H2 in h2.
+          Search "get_other".
+          rewrite <- (h2 n0 H3).
+          eapply get_other_set. apply Nstk.
+          rewrite Nat.sub_diag. simpl. apply beq_id_false_iff in E.
+          Search "find".
+          destruct (find_inj2 _ _ _ _ _ H0 H3) as [contra contra']. auto.
+      - intros. destruct (H2' i) as [h2 h2'].
+        unfold t_update.
+        destruct (beq_id x i) eqn:E; apply beq_id_true_iff in E || apply beq_id_false_iff in E.
+        + subst. rewrite H3 in H0. discriminate.
+        + auto.
+      
+    }
+  }
+  {
+    intros. simpl in *.
+    destruct H1 as [h1 h2].
+    assert (C1: codeseq_at C pc (compile_com (Datatypes.length stk) vlist c1)).
+    {eauto with codeseq. }
+    assert (C2: codeseq_at C (pc+length (compile_com (Datatypes.length stk) vlist c1))
+                           (compile_com (Datatypes.length stk) vlist c2)).
+    {eauto with codeseq. }
+    
+    destruct (IHceval1 C stk vlist pc h1 C1 H3) as [stk' [ih1 ih1']].
+    remember ih1' as t.
+    destruct t as [ih1'' h1'''].
+    remember H3 as t.
+    destruct t as [H3' H3''].
+    assert (stkE: length stk' = length stk).
+    { omega. }
+    rewrite <- stkE in C2.
+    destruct (IHceval2 C stk' vlist _ h2 C2 ih1') as [stk'' [ih2 ih2']].    
+    eexists. split.
+    - eapply star_trans. apply ih1. normalize. repeat rewrite stkE in ih2. apply ih2.
+    - assumption.
+  }
+  {
+    intros. simpl in H2.
+
+    assert (Ct : codeseq_at C pc
+       (compile_bexp (Datatypes.length stk) vlist b false
+                     (Datatypes.length (compile_com (Datatypes.length stk) vlist c1) + 1))).
+    { eauto with codeseq. }
+
+    set (code_test := (compile_bexp (Datatypes.length stk) vlist b false
+                                    (Datatypes.length
+                                       (compile_com (Datatypes.length stk) vlist c1) + 1)))
+      in *.
+    set (code_ifso := compile_com (length stk) vlist c1).
+    set (code_ifnot := compile_com (length stk) vlist c2).
+    
+    assert (C1 : codeseq_at C (pc + Datatypes.length code_test)
+                            (compile_com (Datatypes.length stk) vlist c1)). {eauto with codeseq. }
+    assert (C2: codeseq_at C (pc + length code_test + length code_ifso + 1) code_ifnot).
+    { eauto with codeseq. }
+    
+    pose (btest := compile_bexp_correct b C stk pc vlist false
+                                        (length (code_ifso) + 1) Ct).
+    
+    destruct H1 as [H1' H1].
+    destruct (IHceval C stk _ _ H1' C1 H3) as [stk' [ih ih']].
+    
+    eexists. split.
+    Check agree_beval.
+    - eapply star_trans. apply btest. rewrite <- (agree_beval _ _ _ b H3). rewrite H. simpl.
+      fold code_ifso code_ifnot code_test in ih |- *. normalize.
+      eapply star_trans. apply ih.
+      apply star_one. unfold code_ifso. unfold code_ifnot. eapply trans_branch_forward.
+      eauto with codeseq. unfold code_ifso, code_test, code_ifnot. omega.
+    - assumption.
+  }
+  {
+    intros. simpl in H2.
+
+    assert (Ct : codeseq_at C pc
+       (compile_bexp (Datatypes.length stk) vlist b false
+                     (Datatypes.length (compile_com (Datatypes.length stk) vlist c1) + 1))).
+    { eauto with codeseq. }
+
+    set (code_test := (compile_bexp (Datatypes.length stk) vlist b false
+                                    (Datatypes.length
+                                       (compile_com (Datatypes.length stk) vlist c1) + 1)))
+      in *.
+    set (code_ifso := compile_com (length stk) vlist c1) in code_test.
+    set (code_ifnot := compile_com (length stk) vlist c2) in code_test.
+    
+    assert (C1 : codeseq_at C (pc + Datatypes.length code_test)
+                            (compile_com (Datatypes.length stk) vlist c1)). {eauto with codeseq. }
+    assert (C2: codeseq_at C (pc + length code_test + length code_ifso + 1) code_ifnot).
+    { eauto with codeseq. }
+    
+    pose (btest := compile_bexp_correct b C stk pc vlist false
+                                        (length (code_ifso) + 1) Ct).
+    
+    destruct H1 as [H1' H1].
+    destruct (IHceval C stk _ _ H1 C2 H3) as [stk' [ih ih']].
+
+    eexists. split.
+    Check agree_beval.
+    - eapply star_trans. apply btest. rewrite <- (agree_beval _ _ _ b H3). rewrite H. simpl.
+      fold code_ifso code_ifnot code_test in ih |- *. normalize.
+      rewrite <- Nat.add_1_l with (length code_ifnot). normalize. apply ih.
+    - assumption.
+  }
+  {
+    simpl in *. intros.
+    set (code_body := compile_com (Datatypes.length stk) vlist c) in *.
+    set (code_test := compile_bexp (Datatypes.length stk) vlist b false
+                                   (Datatypes.length code_body + 1)) in *.
+    assert (Cb : codeseq_at C (pc + length code_test)
+                             (compile_com (Datatypes.length stk) vlist c)).
+    { eauto with codeseq. }
+    assert (Ct : codeseq_at C pc (compile_bexp (Datatypes.length stk) vlist b false
+                                               (Datatypes.length code_body + 1))).
+    { eauto with codeseq. }
+    
+    pose (jump:= compile_bexp_correct  _ _ _ _ _ _ _ Ct).
+    rewrite <- (agree_beval _ _ _ b H2) in jump.
+    eexists.
+    split. 2 : apply H2.
+    normalize.
+    rewrite H in jump. simpl in jump. normalize.
+    fold code_test in jump. assumption.    
+  }
+  {
+    intros.
+    set (code_body := compile_com (Datatypes.length stk) vlist c) in *.
+    set (code_test := compile_bexp (Datatypes.length stk) vlist b false
+                                   (Datatypes.length code_body + 1)) in *.
+    assert (Cb : codeseq_at C (pc + length code_test)
+                             (compile_com (Datatypes.length stk) vlist c)).
+    { eauto with codeseq. }
+    assert (Ct : codeseq_at C pc (compile_bexp (Datatypes.length stk) vlist b false
+                                               (Datatypes.length code_body + 1))).
+    { eauto with codeseq. }
+    
+    pose (jump:= compile_bexp_correct  _ _ _ _ _ _ _ Ct).
+    rewrite <- (agree_beval _ _ _ b H4) in jump.
+    eexists
+  }
+Admitted.
+
+
 Lemma compile_com_correct_terminating:
   forall (c : com) (st st': state) (C:code) (stk:stack) (vlist:varlist) (pc:nat),
   c / st \\ st' ->
@@ -835,7 +1037,7 @@ Proof.
     inversion H. subst. assumption.
   }
   { (* x ::= a *)
-    intros st st' C stk vlist pc H vlist_cont_all H0 H1. 
+    intros st st' C stk vlist pc H vlist_cont_all H0 H1.
     unfold compile_com. simpl in H0.
     destruct (find (Id x) vlist) as [n | ] eqn:E.
     { 
@@ -935,25 +1137,93 @@ Proof.
   { (*IFB b THEN c1 ELSE c2*)
     intros. simpl in *.
     simpl in H0, H1. destruct H0 as [vlall1 vlall2].
+
+    set (code_test := (compile_bexp (Datatypes.length stk) vlist b false
+                                    (Datatypes.length
+                                       (compile_com (Datatypes.length stk) vlist c1) + 1)))
+      in *.
+    set (code_ifso := compile_com (length stk) vlist c1).
+    set (code_ifnot := compile_com (length stk) vlist c2).
+    
     inversion H; subst.
-    {
+    - (* beval = true *)
+      normalize.
+      assert (C1 : codeseq_at C (pc + Datatypes.length code_test)
+                              (compile_com (Datatypes.length stk) vlist c1)).
+      { eauto with codeseq. }
+      pose (ih1 := IHc1 st st' C stk vlist (pc+ length code_test) H8 vlall1 C1 H2).
+      destruct ih1 as [stk' [ih1 ih1']].
+      
       eexists. split.
-      { (*beval b = true*)
+      { 
         
         eapply star_trans. apply compile_bexp_correct. eauto with codeseq.
         rewrite <- (agree_beval _ _ _ b H2). rewrite H7. simpl.
+        
         eapply star_trans.
-        {
-          set (code_test := (compile_bexp (Datatypes.length stk) vlist b false
-                                          (Datatypes.length (compile_com (Datatypes.length stk) vlist c1) + 1))) in *.
-          normalize.
-          pose (ih1 := IHc1 st st' C stk vlist (pc+ length code_test) H8).
-        }
+        { fold code_test. normalize. apply ih1. }
+        { apply star_one. eapply trans_branch_forward.
+          eauto with codeseq. unfold code_ifnot, code_ifso. omega. }
       }
-      (*pose (ih1 := IHc1 _ _ C stk _ _ H8 vlall1 ()
+      { assumption. }
+    - (*beval b = false *)
+      fold code_test code_ifso code_ifnot in H1 |- *.
+      normalize.
+      assert (C2: codeseq_at C (pc + length code_test + length code_ifso + 1) code_ifnot).
+      { eauto with codeseq. }
+      pose (ih2 := IHc2 st st' C stk vlist _ H8 vlall2 C2 H2).
+      destruct ih2 as [stk' [ih2 ih2']].
+      
+      eexists. split.
+      {
+        eapply star_trans. apply compile_bexp_correct. eauto with codeseq.
+        rewrite <- (agree_beval _ _ _ b H2). rewrite H7. simpl.
+        fold code_test code_ifso code_ifnot in ih2 |- *.
+        
+        rewrite <- Nat.add_1_l with (length code_ifnot). normalize.
+        apply ih2.
+      }
+      { assumption.  }
+  }
+  { (* WHILE b DO c END *)
+    simpl in *. intros.
+    set (code_body := compile_com (Datatypes.length stk) vlist c) in *.
+    set (code_test := compile_bexp (Datatypes.length stk) vlist b false
+                                   (Datatypes.length code_body + 1)) in *.
+    assert (Cb : codeseq_at C (pc + length code_test)
+                             (compile_com (Datatypes.length stk) vlist c)).
+    { eauto with codeseq. }
+    assert (Ct : codeseq_at C pc (compile_bexp (Datatypes.length stk) vlist b false
+                                               (Datatypes.length code_body + 1))).
+    { eauto with codeseq. }
+    
+    pose (jump:= compile_bexp_correct  _ _ _ _ _ _ _ Ct).
+    rewrite <- (agree_beval _ _ _ b H2) in jump.
+    inversion H; subst.
+    {
+      eexists.
+      split. 2 : apply H2.
+      normalize.
+      rewrite H7 in jump. simpl in jump. normalize.
+      fold code_test in jump. assumption.
     }
     {
-
+      destruct (IHc _ _ _ _ _ _ H6 H0 Cb H2) as [stk' [ih ih']].
+      eexists.
+      split.
+      {
+        unfold code_test.
+        normalize.
+        rewrite H5 in jump. simpl in jump.
+        eapply star_trans. apply jump. normalize.
+  
+        fold code_test code_body in ih |- *.
+        eapply star_trans. apply ih.
+        inversion H9.
+        apply star_one.
+        Check trans_branch_backward.
+        eapply trans_branch_backward
+      }
     }
   }
 Qed.
