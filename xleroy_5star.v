@@ -1013,9 +1013,31 @@ Proof.
     
     pose (jump:= compile_bexp_correct  _ _ _ _ _ _ _ Ct).
     rewrite <- (agree_beval _ _ _ b H4) in jump.
-    eexists
+    simpl. fold code_body code_test.
+    simpl in H2.
+    destruct (IHceval1 C stk vlist _ H2 Cb H4) as [stk' [ihb ihb']]. 
+    assert (V: varlist_contains_all (WHILE b DO c END) vlist).
+    {simpl. auto. }
+
+    assert (L : length stk' = length stk).
+    { destruct H4. destruct ihb'. omega. }          
+
+    pose (Ihc2 := IHceval2 C stk' _ pc V).
+    rewrite L in Ihc2.
+    destruct (Ihc2 H3 ihb') as [stk'' ihc].
+    eexists. split.
+    eapply star_trans. apply jump.
+    rewrite H. simpl. fold code_body code_test. normalize. simpl.
+    eapply star_trans. apply ihb. fold code_body code_test.
+    eapply star_trans. apply star_one. eapply trans_branch_backward. eauto with codeseq.
+    2 : {
+      fold code_body code_test in ihc. normalize.
+      apply ihc.
+    }
+    fold code_body code_test. normalize. omega.
+    apply ihc.
   }
-Admitted.
+Qed.
 
 
 Lemma compile_com_correct_terminating:
