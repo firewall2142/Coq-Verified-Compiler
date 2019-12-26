@@ -1,15 +1,17 @@
+(** 
+The final proof of the 
+*)
 
 Set Warnings "-notation-overridden,-parsing".
 From Coq Require Import Strings.String.
 From Coq Require Import Bool.Bool.
 From Coq Require Import Arith.Arith.
 From Coq Require Import Lists.List.
-Require Export Sequences.
-Require Export Maps.
+From StorelessMachine Require Import Sequences.
+From StorelessMachine Require Import Maps.
+From StorelessMachine Require Import Imp.
+From StorelessMachine Require Import Facts.
 Require Import Omega.
-(*From Coq Require Import Arith.EqNat.*)
-(*From Coq Require Import omega.Omega.*)
-(*From Coq Require Import Init.Nat.*)
 
 Ltac normalize :=
   repeat rewrite app_length in *;
@@ -27,359 +29,6 @@ Ltac normalize2 :=
   repeat rewrite Nat.add_0_r in *;
   simpl in *.
 
-(* ========== Maps  =========== *)
-Inductive id : Type :=
-  | Id : string -> id.
-
-Theorem id_inj: forall u v, Id u = Id v <-> u = v.
-Proof. intros. split; intros; [inversion H | rewrite H]; auto.
-Qed.
-
-Definition beq_id x y :=
-  match x,y with
-    | Id n1, Id n2 => if string_dec n1 n2 then true else false
-  end.
-
-Theorem beq_id_refl : forall id, true = beq_id id id.
-Proof.
-  intros [n]. simpl. destruct (string_dec n n).
-  - reflexivity.
-  - destruct n0. reflexivity.
-Qed.
-
-Theorem beq_id_true_iff : forall x y : id,
-  beq_id x y = true <-> x = y.
-Proof.
-   intros [n1] [n2].
-   unfold beq_id.
-   destruct (string_dec n1 n2).
-   - subst. split. reflexivity. reflexivity.
-   - split.
-     + intros contra. inversion contra.
-     + intros H. inversion H. subst. destruct n. reflexivity.
-Qed.
-
-Theorem beq_id_false_iff : forall x y : id,
-  beq_id x y = false
-  <-> x <> y.
-Proof.
-  intros x y. rewrite <- beq_id_true_iff.
-  rewrite not_true_iff_false. reflexivity. Qed.
-
-Theorem false_beq_id : forall x y : id,
-   x <> y
-   -> beq_id x y = false.
-Proof.
-  intros x y. rewrite beq_id_false_iff.
-  intros H. apply H. Qed.
-
-
-Definition total_map (A:Type) := id -> A.
-
-(** Intuitively, a total map over an element type [A] is just a
-    function that can be used to look up [id]s, yielding [A]s. *)
-
-(** The function [t_empty] yields an empty total map, given a default
-    element; this map always returns the default element when applied
-    to any id. *)
-
-Definition t_empty {A:Type} (v : A) : total_map A :=
-  (fun _ => v).
-
-(** More interesting is the [update] function, which (as before) takes
-    a map [m], a key [x], and a value [v] and returns a new map that
-    takes [x] to [v] and takes every other key to whatever [m] does. *)
-
-Definition t_update {A:Type} (m : total_map A)
-                    (x : id) (v : A) :=
-  fun x' => if beq_id x x' then v else m x'.
-
-Search "eq".
-
-Theorem if_string_dec_eqb : forall s1 s2,
-    (if string_dec s1 s2 then true else false) =
-    String.eqb s1 s2.
-Proof.
-  intros.
-  destruct (string_dec s1 s2). rewrite e. auto using String.eqb_refl.
-  
-  destruct (s1 =? s2)%string eqn:E. 
-  apply String.eqb_eq in E. unfold not in n. destruct (n E). reflexivity.
-Qed.
-(* ======================= Imp =============================== *)
-
-Definition state := total_map nat.
-
-Definition empty_state : state :=
-  t_empty 0.
-
-
-Inductive aexp : Type :=
-| ANum : nat -> aexp
-| AId : id -> aexp
-| APlus (a1 a2: aexp)
-| AMinus (a1 a2: aexp)
-| AMul (a1 a2: aexp).
-
-Inductive bexp : Type :=
-| BTrue : bexp
-| BFalse : bexp
-| BEq : aexp -> aexp -> bexp
-| BLe : aexp -> aexp -> bexp
-| BNot : bexp -> bexp
-| BAnd : bexp -> bexp -> bexp.
-
-
-Inductive com : Type :=
-| CSkip
-| CAss (x : string) (a : aexp)
-| CSeq (c1 c2 : com)
-| CIf (b : bexp) (c1 c2 : com)
-| CWhile (b : bexp) (c : com).
-
-Definition X := ("X"%string).
-Definition Y := ("Y"%string).
-Definition Z := ("Z"%string).
-Definition W := ("W"%string).
-
-
-Notation "'SKIP'" :=
-  CSkip.
-Notation "x '::=' a" :=
-  (CAss x a) (at level 60).
-Notation "c1 ;; c2" :=
-  (CSeq c1 c2) (at level 80, right associativity).
-Notation "'WHILE' b 'DO' c 'END'" :=
-  (CWhile b c) (at level 80, right associativity).
-Notation "'IFB' c1 'THEN' c2 'ELSE' c3 'FI'" :=
-  (CIf c1 c2 c3) (at level 80, right associativity).
-
-Coercion Id : string >-> id.
-Coercion AId : id >-> aexp.
-Coercion ANum : nat >-> aexp.
-Definition bool_to_bexp (b : bool) : bexp :=
-  if b then BTrue else BFalse.
-Coercion bool_to_bexp : bool >-> bexp.
-Bind Scope imp_scope with aexp.
-Bind Scope imp_scope with bexp.
-Delimit Scope imp_scope with imp.
-Notation "x + y" := (APlus x y) (at level 50, left associativity) : imp_scope.
-Notation "x - y" := (AMinus x y) (at level 50, left associativity) : imp_scope.
-Notation "x * y" := (AMul x y) (at level 40, left associativity) : imp_scope.
-Notation "x <= y" := (BLe x y) (at level 70, no associativity) : imp_scope.
-Notation "x = y" := (BEq x y) (at level 70, no associativity) : imp_scope.
-Notation "x && y" := (BAnd x y) (at level 40, left associativity) : imp_scope.
-Notation "'~' b" := (BNot b) (at level 75, right associativity) : imp_scope.
-Definition example_aexp := (3 + (X * 2))%imp : aexp.
-Definition example_bexp := (true && ~(X <= 4))%imp : bexp.
-
-
-
-
-(*<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><*)
-
-Inductive instruction: Type :=
-| Iconst (n:nat)                (*Push integer 'n' to stack*)
-| Iget (i:nat)                  (*push value of the i-th stack slot*)
-| Iset (i:nat)                  (*Pop an integer, assign it to the i-th stack slot*)
-| Iadd                          (*pop n2, pop n1 and push back n1+n2*)
-| Isub                          (*pop n2, pop n1, push back n1-n2*)
-| Imul                          (* pop n2, pop n1, push back n1*n2 *)
-| Ibranch_forward (ofs:nat)     (*skip ofs instructions forward*)
-| Ibranch_backward (ofs:nat)    (*skip ofs instructions backward*)
-| Ibeq(ofs:nat)                 (*pop n2, pop n1, skip ofs if n1=n2*)
-| Ibne(ofs:nat)                 (*pop n2, pop n1, skip ofs if n1<>n2*)
-| Ible(ofs:nat)                 (*pop n2, pop n1, skip ofs if n1<=n2*)
-| Ibgt(ofs:nat)                 (*pop n2, pop n1, skip ofs if n1>n2*)
-| Ihalt                         (*terminate execution successfully*)
-.
-
-Definition code := list instruction.
-Definition stack := list nat.
-Definition configuration := (nat * stack)%type.
-
-
-(* ======================= codeseq =============================== *)
-
-
-Fixpoint code_at (C:code) (pc: nat) : option instruction :=
-  match C, pc with
-  | nil, _ => None
-  | i::C', O => Some i
-  | i::C', S pc' => code_at C' pc'
-  end.
-
-
-Inductive codeseq_at: code -> nat -> code -> Prop :=
-  | codeseq_at_intro: forall C1 C2 C3 pc,
-      pc = length C1 ->
-      codeseq_at (C1 ++ C2 ++ C3) pc C2.
-
-Lemma code_at_app:
-  forall i c2 c1 pc,
-  pc = length c1 ->
-  code_at (c1 ++ i :: c2) pc = Some i.
-Proof.
-  induction c1; simpl; intros; subst pc; auto.
-Qed.
-
-Lemma codeseq_at_head:
-  forall C pc i C',
-  codeseq_at C pc (i :: C') ->
-  code_at C pc = Some i.
-Proof.
-  intros. inversion H. simpl. apply code_at_app. auto.
-Qed.
-
-Lemma codeseq_at_tail:
-  forall C pc i C',
-  codeseq_at C pc (i :: C') ->
-  codeseq_at C (pc + 1) C'.
-Proof.
-  intros. inversion H. 
-  change (C1 ++ (i :: C') ++ C3)
-    with (C1 ++ (i :: nil) ++ C' ++ C3).
-  rewrite <- app_ass. constructor. rewrite app_length. auto.
-Qed. 
-
-Lemma codeseq_at_app_left:
-  forall C pc C1 C2,
-  codeseq_at C pc (C1 ++ C2) ->
-  codeseq_at C pc C1.
-Proof.
-  intros. inversion H. rewrite app_ass. constructor. auto.
-Qed.
-
-Lemma codeseq_at_app_right:
-  forall C pc C1 C2,
-  codeseq_at C pc (C1 ++ C2) ->
-  codeseq_at C (pc + length C1) C2.
-Proof.
-  intros. inversion H. rewrite app_ass. rewrite <- app_ass. constructor. rewrite app_length. auto.
-Qed.
-
-Lemma codeseq_at_app_right2:
-  forall C pc C1 C2 C3,
-  codeseq_at C pc (C1 ++ C2 ++ C3) ->
-  codeseq_at C (pc + length C1) C2.
-Proof.
-  intros. inversion H. repeat rewrite app_ass. rewrite <- app_ass. constructor. rewrite app_length. auto.
-Qed.
-
-Hint Resolve code_at_app codeseq_at_head codeseq_at_tail codeseq_at_app_left codeseq_at_app_right codeseq_at_app_right2 Nat.add_0_r Nat.add_1_r Nat.add_assoc Nat.add_comm :codeseq.
-
-
-(*<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><*)
-
-Fixpoint get_nth_slot (stk:stack) (n:nat) : option nat :=
-  match stk with
-  | nil => None
-  | v :: stk' =>
-    match n with
-    | O => Some v
-    | S n' => get_nth_slot stk' n'
-    end
-  end.
-
-Fixpoint set_nth_slot (stk:stack) (n:nat) (val:nat): option stack :=
-  match stk with
-  | nil => None
-  | s :: stk'  =>
-    match n with
-    | O => Some (val :: stk')
-    | S n' => match set_nth_slot stk' n' val with
-              | None => None
-              | Some ans => Some (s :: ans)
-              end
-    end
-  end.
-    
-Import ListNotations.
-
-Inductive transition (C: code): configuration -> configuration -> Prop :=
-  
-| trans_const: forall pc stk n, code_at C pc = Some(Iconst n) ->
-                                transition C (pc, stk) (pc + 1, n :: stk)
-                                           
-| trans_get: forall pc stk n v, code_at C pc = Some(Iget n) ->
-                                get_nth_slot stk n = Some v ->
-                                transition C (pc, stk) (pc + 1, v :: stk)
-                                           
-| trans_set: forall pc stk n v stk', code_at C pc = Some(Iset n) ->
-                                     set_nth_slot stk n v = Some stk' ->
-                                     transition C (pc, v :: stk) (pc + 1, stk')
-                                                
-| trans_add: forall pc stk n1 n2,  code_at C pc = Some(Iadd) ->
-                                   transition C (pc, n2 :: n1 :: stk) (pc + 1, (n1 + n2) :: stk)
-                                              
-| trans_sub: forall pc stk n1 n2, code_at C pc = Some(Isub) ->
-                                  transition C (pc, n2 :: n1 :: stk) (pc + 1, (n1 - n2) :: stk)
-                                             
-| trans_mul: forall pc stk n1 n2, code_at C pc = Some(Imul) ->
-                                  transition C (pc, n2 :: n1 :: stk) (pc + 1, (n1 * n2) :: stk)
-                                             
-| trans_branch_forward: forall pc stk ofs pc', code_at C pc = Some(Ibranch_forward ofs) ->
-                                               pc' = pc + 1 + ofs ->
-                                               transition C (pc, stk) (pc', stk)
-
-| trans_branch_backward: forall pc stk ofs pc', code_at C pc = Some(Ibranch_backward ofs) ->
-                                                pc' = pc + 1 - ofs ->
-                                                transition C (pc, stk) (pc', stk)
-
-| trans_beq: forall pc stk ofs n1 n2 pc', code_at C pc = Some(Ibeq ofs) ->
-                                          pc' = (if beq_nat n1 n2 then pc + 1 + ofs else pc + 1) ->
-                                          transition C (pc, n2 :: n1 :: stk) (pc', stk)
-
-| trans_bne: forall pc stk ofs n1 n2 pc', code_at C pc = Some(Ibne ofs) ->
-                                          pc' = (if beq_nat n1 n2 then pc + 1 else pc + 1 + ofs) ->
-                                          transition C (pc, n2 :: n1 :: stk) (pc', stk)
-
-| trans_ble: forall pc stk ofs n1 n2 pc', code_at C pc = Some(Ible ofs) ->
-                                          pc' = (if leb n1 n2 then pc + 1 + ofs else pc + 1) ->
-                                          transition C (pc, n2 :: n1 :: stk) (pc', stk)
-
-| trans_bgt: forall pc stk ofs n1 n2 pc', code_at C pc = Some(Ibgt ofs) ->
-                                          pc' = (if leb n1 n2 then pc + 1 else pc + 1 + ofs) ->
-                                          transition C (pc, n2 :: n1 :: stk) (pc', stk).
-
-
-Definition varlist := list string.
-
-Fixpoint find (var : id) (vlist : varlist) : option nat :=
-  match vlist with
-  | nil => None
-  | u::vlist' => if beq_id (Id u) var then
-               Some O
-             else
-               match find var vlist' with
-               | None => None
-               | Some n => Some (S n)
-               end
-  end.
-
-
-
-Fixpoint gen_vlist (c:com) (ivlist: varlist): varlist :=
-  match c with
-  | c1 ;; c2 => let v1 := gen_vlist c1 ivlist in
-                gen_vlist c2 v1
-  | IFB b THEN c1 ELSE c2 FI => let v1 := gen_vlist c1 ivlist in
-                                gen_vlist c2 v1
-  | WHILE b DO c1 END => gen_vlist c1 ivlist
-  | x ::= a => match find (Id x) ivlist with
-                | None => x::ivlist
-                | _ => ivlist
-                end
-  | CSkip => ivlist
-  end.
-    
-
-Definition mycode :=
-  (
-     X ::= ANum 3 ;; WHILE BTrue DO Y ::= AId (Id X) END
-  ).
-
-Compute (find (Id Z) (gen_vlist mycode nil)).
 
 Fixpoint compile_aexp (stklen: nat) (vlist : varlist) (a:aexp): code :=
   match a with
@@ -469,18 +118,6 @@ Definition compile_program (p: com): code :=
   ++ compile_com (length vlist) vlist p
   ++ Ihalt::nil.
 
-Definition test_prog0 := X ::= ANum 3;; Y ::= AId (Id X).
-Definition test_prog1 := WHILE BTrue DO SKIP END.
-Definition test_prog2 :=
-  X ::= ANum 3 ;;
-  Y ::= AId (Id X) ;;
-  WHILE BLe (ANum O) (AId (Id X)) DO Y ::= APlus (AId (Id Y)) (AId (Id X)) ;; X ::= AMinus (AId (Id X)) (ANum 1)  END.
-
-Print test_prog2.
-Compute (gen_vlist test_prog2 nil).
-Compute (compile_program test_prog0). 
-Compute (compile_program test_prog1).
-Compute (compile_program test_prog2).
 
 Fixpoint aeval (st : state) (a:aexp): nat :=
   match a with
@@ -532,77 +169,72 @@ Fixpoint beval_stk (v:varlist) (stk: stack) (b:bexp): bool :=
 
 
 
+Inductive varlist_contains_all : com -> varlist -> Prop :=
+| Vseq : forall c1 c2 vlist,
+    varlist_contains_all c1 vlist ->
+    varlist_contains_all c2 vlist ->
+    varlist_contains_all (c1 ;; c2) vlist
+| Vifb : forall c1 c2 vlist b,
+    varlist_contains_all c1 vlist ->
+    varlist_contains_all c2 vlist ->
+    varlist_contains_all (IFB b THEN c1 ELSE c2 FI) vlist
+| Vwhile: forall c vlist b,
+    varlist_contains_all c vlist ->
+    varlist_contains_all (WHILE b DO c END) vlist
+| Vskip : forall vlist, varlist_contains_all SKIP vlist
+| Vass : forall  vlist x a,
+    (exists n, find (Id x) vlist = Some n) ->
+    varlist_contains_all (x ::= a) vlist.
 
 
-(*<><><><><><><><><> HELPER <><><><><><><><><><><*)
 
-
-
-
-
-Fact string_dec_refl:
-  forall x, (if string_dec x x then true else false) = true.
+Theorem extend_gen_vlist:
+  forall a x l,
+    varlist_contains_all a l ->
+    varlist_contains_all a (x::l).
 Proof.
-  intros. destruct string_dec; auto.
+  induction a.
+  - constructor.
+  - intros. inversion H. subst.
+    apply Vass.
+    destruct (if string_dec x0 x then true else false) eqn:E.
+    + simpl. rewrite E.  exists 0. reflexivity.
+    + simpl. rewrite E. destruct H3. rewrite H0. exists (S x1).
+      reflexivity.
+  - intros. inversion H. subst. apply Vseq; auto.
+  - intros. inversion H. subst. apply Vifb; auto.
+  - intros. inversion H. subst. apply Vwhile. auto.
 Qed.
 
-Fact get_nth_success: forall stk u, u < length stk -> exists v,
-      get_nth_slot stk u = Some v.
+Theorem gen_gen_vlist:
+  forall b a l ,
+    varlist_contains_all a l ->
+    varlist_contains_all a (gen_vlist b l).
 Proof.
-  induction stk.
-  simpl. intros. omega.
-  intros u.
-  destruct u.
-  - subst. intros.
-    exists a. reflexivity.
-  - simpl. intros. apply IHstk. omega.
-Qed.
-
-Fact find_list_length:
-  forall vlist i n,
-    find i vlist = Some n -> n < length vlist.
-Proof.
-  induction vlist as [| v vl].
-  - intros. discriminate.
-  - destruct i as [i]. simpl. rewrite if_string_dec_eqb.
-    destruct (v =? i)%string eqn:E.
-    + intros. injection H. omega.
-    + destruct (find (Id i) vl) as [m|] eqn:Q.
-      intros. injection H.
-      pose (H1 := IHvl _ _ Q). omega.
-      intros. discriminate.
-Qed.
-
-Theorem find_get_ofs: forall (i:id) vlist n stk,
-    length stk >= length vlist ->
-    find i vlist = Some n ->
-    exists m,
-      get_nth_slot stk (length stk - length vlist + n) = Some m.
-Proof.
-  intros.
-  apply find_list_length in H0.
-  apply get_nth_success.
-  omega.
-Qed.
-
-
-Theorem set_nth_success:
-  forall stk pos val,
-    pos < length stk ->
-  exists stk',
-      set_nth_slot stk pos val = Some stk'.
-Proof.
-  induction stk.
-  - intros. simpl in H. omega.
-  - intros. destruct pos as [| pos]. simpl. eauto.
-    simpl in H.
-    cut (pos < length stk). simpl. intros.
-    destruct (IHstk pos val H0) as [ stk' hstk'].
-    rewrite hstk'. eauto.
-    omega.
+  induction b.
+  - simpl. auto.
+  - intros. simpl. destruct (find x l) eqn:E. assumption.
+    apply extend_gen_vlist. assumption.
+  - simpl. intros. cut (varlist_contains_all a (gen_vlist b1 l)); intuition.
+  - simpl. intros. cut (varlist_contains_all a (gen_vlist b2 l)); intuition.
+  - simpl. intros. auto.
 Qed.
 
 
+
+Theorem gen_vlist_contains_all :
+  forall c l, varlist_contains_all c (gen_vlist c l).
+Proof.
+  induction c.
+  - simpl. constructor.
+  - intros. simpl. apply Vass. simpl.
+    destruct (find x l) eqn:E.
+    + rewrite E. exists n. reflexivity. 
+    + simpl. rewrite string_dec_refl. exists 0. reflexivity.
+  - simpl. intros. apply Vseq. apply gen_gen_vlist. auto. auto.
+  - simpl. intros. apply Vifb. apply gen_gen_vlist. auto. auto.
+  - simpl. intros. apply Vwhile. auto.
+Qed.
 
 
 Definition agree (v : varlist) (stk : stack) (st : state) :=
@@ -613,109 +245,6 @@ Definition agree (v : varlist) (stk : stack) (st : state) :=
     /\
     (find i v = None -> st i = O))
 .
-
-
-Theorem get_set_eq : forall pos l l' val,
-    set_nth_slot l pos val = Some l' ->
-    get_nth_slot l' pos = Some val.
-Proof.
-  induction pos.
-  - destruct l.
-    + discriminate.
-    + intros. simpl in H. inversion H. subst. reflexivity.
-  - intros. destruct l; try discriminate.
-    simpl in H.
-    destruct (set_nth_slot l pos val) eqn:E; try discriminate.
-    inversion H. simpl. eapply IHpos. apply E.
-Qed.
-
-Theorem get_other_set : forall val l' l n' n,
-    set_nth_slot l n val = Some l' ->
-    n' <> n ->
-    get_nth_slot l' n' = get_nth_slot l n'.
-Proof.
-  induction l'.
-  - intros. induction l. reflexivity.
-    simpl in *. destruct n. discriminate.
-    destruct (set_nth_slot l n val); discriminate.
-  - intros.
-    destruct l. {simpl in *. discriminate. }
-    destruct n.
-    + simpl in H. inversion H. subst.
-      destruct n'. omega.
-      simpl. reflexivity.
-    + simpl in H.
-      destruct (set_nth_slot l n val) eqn:E; try discriminate.
-      inversion H. subst.
-      destruct n'.
-      * simpl. reflexivity.
-      * simpl. eapply IHl'. apply E.
-        omega.
-Qed.
-
-Fact set_nth_length: forall stk' stk p v,
-    set_nth_slot stk p v = Some stk' ->
-    length stk = length stk'.
-Proof.
-  induction stk'.
-  - intros. simpl in H.
-    destruct stk; simpl in *. discriminate.
-    destruct p. discriminate. destruct (set_nth_slot stk p v); discriminate.
-  - intros. destruct stk.
-    + simpl in *. discriminate.
-    + simpl. destruct p; simpl in *. inversion H. subst. reflexivity.
-      destruct (set_nth_slot stk p v) eqn:E; try discriminate.
-      inversion H. subst. eauto.
-Qed.
-
-Theorem find_inj :
-  forall x y vl n,
-    find x vl = Some n ->
-    (find y vl = find x vl <-> x = y).
-Proof.
-  induction vl.
-  {intros. split; intros; simpl in *; discriminate. }
-  intros. split;intros.
-  destruct (beq_id a x) eqn:E.
-  - simpl in H. remember E as t. unfold beq_id in t. rewrite t in H.
-    inversion H. clear Heqt t. rewrite beq_id_true_iff in E. subst.
-    simpl in H0. rewrite string_dec_refl in H0.
-    destruct (beq_id a y) eqn:E.
-    + apply beq_id_true_iff in E. assumption.
-    + unfold beq_id in E. rewrite E in H0. destruct (find y vl); discriminate.
-  - destruct x as [ x'].
-    unfold beq_id in E.
-    destruct (beq_id a y) eqn:E'.
-    + apply beq_id_true_iff in E'. rewrite H in H0.
-      destruct y as [y'].
-      simpl in H0. inversion E'. clear E'.
-      rewrite H2 in H0. rewrite string_dec_refl in H0. inversion H0.
-      subst.
-      simpl in H.
-      destruct (if string_dec y' x' then true else false); try discriminate.
-      destruct (find x' vl); discriminate.
-    + destruct (if string_dec a x' then true else false) eqn:Ex; try discriminate.
-      * clear E. destruct y  as [y']. unfold beq_id in E'.
-        rewrite H in H0. simpl in H, H0. rewrite Ex in H. rewrite E' in H0.
-        destruct (find x' vl); try discriminate.
-        destruct (find y' vl); try discriminate.
-        inversion H. inversion H0.
-        eapply IHvl. destruct n. discriminate.
-        auto. rewrite <- H2 in H3. auto.
-  - subst. reflexivity.
-Qed.
-
-Theorem find_inj2 :
-  forall vl x y n1 n2,
-    find x vl = Some n1 ->
-    find y vl = Some n2 ->
-    (x = y <-> n1 = n2).
-Proof.
-  intros. split; intros.
-  - subst. rewrite H in H0. inversion H0. reflexivity.
-  - pose (Inj := find_inj _ y _ _ H).
-    rewrite <- Inj. rewrite <- H1 in H0. rewrite H0. auto.
-Qed.
 
 
 Theorem aeval_stk_appended: forall (v : varlist) (a:aexp) (stk: stack) (s : nat) ,
@@ -786,10 +315,6 @@ Proof.
     { apply IHa2. simpl. omega. }
     omega.  
 Qed.
-(*<><><><><><><><><> HELPER END<><><><><><><><><><><*)
-
-
-
 
 
 
@@ -863,6 +388,7 @@ Inductive ceval : com -> state -> state -> Prop :=
 
 
 
+
 Lemma compile_aexp_correct:
   forall (a:aexp) (C:code) (stk:stack) (pc:nat) (vlist:varlist),
     forall (ineq : length stk >= length vlist), 
@@ -876,7 +402,7 @@ Proof.
   - intros.
     apply star_one.
     simpl in *.
-    destruct (find i vlist) as [| n] eqn:E.
+    destruct (find i vlist) eqn:E.
     + simpl. eapply trans_get. eauto with codeseq.
       
       destruct (find_get_ofs _ _ _  stk ineq E) as [m mH].
@@ -1000,34 +526,11 @@ Proof.
         apply star_refl.
 Qed.
 
+
 Definition mach_terminates (C: code) (stk_init stk_fin: stack) :=
   exists pc,
   code_at C pc = Some Ihalt /\
   star (transition C) (0, stk_init) (pc, stk_fin).
-
-Search "agree".
-
-
-
-Definition test_prog3 :=
-  (Z ::= X;;
-       Y ::= 1;;
-       WHILE ~(Z = 0) DO
-         Y ::= Y * Z;;
-         Z ::= Z - 1
-      END)%imp.
-
-Import ListNotations.
-Compute (compile_program test_prog3).                     
-
-Fixpoint varlist_contains_all (c:com) (vlist : varlist) : Prop :=
-  match c with
-  | (c1 ;; c2) => (varlist_contains_all c1 vlist /\ varlist_contains_all c2 vlist)
-  | IFB b THEN c1 ELSE c2 FI => (varlist_contains_all c1 vlist /\ varlist_contains_all c2 vlist)
-  | WHILE b DO c1 END => varlist_contains_all c1 vlist
-  | SKIP => True
-  | x ::= a => (exists n, find x vlist = Some n)
-  end.
 
 
 
@@ -1049,12 +552,13 @@ Proof.
     inversion H. subst. assumption.
   }
   {
-    intros. simpl in H0. destruct H0 as [m H0].
+    intros. inversion H0. subst. clear H0. rename H6 into H0. destruct H0 as [m H0].
+    set ( n := aeval st a1). assert (H : n = aeval st a1). auto.
     remember H2 as ag.
     destruct H2 as [H2 H2'].
     
     assert (Nstk : exists stk', set_nth_slot stk m n = Some stk').
-    { apply set_nth_success. rewrite H2. eapply find_list_length. eauto. }
+    { apply set_nth_success. rewrite H2. eapply find_success_list_length. eauto. }
     destruct Nstk as [stk' Nstk].
     
     eexists. simpl. normalize. rewrite H0 in *.
@@ -1106,7 +610,7 @@ Proof.
   }
   {
     intros. simpl in *.
-    destruct H1 as [h1 h2].
+    inversion H1. subst. rename H6 into h1. rename H8 into h2.
     assert (C1: codeseq_at C pc (compile_com (Datatypes.length stk) vlist c1)).
     {eauto with codeseq. }
     assert (C2: codeseq_at C (pc+length (compile_com (Datatypes.length stk) vlist c1))
@@ -1145,11 +649,12 @@ Proof.
                             (compile_com (Datatypes.length stk) vlist c1)). {eauto with codeseq. }
     assert (C2: codeseq_at C (pc + length code_test + length code_ifso + 1) code_ifnot).
     { eauto with codeseq. }
-    
+
+    remember H3 as t. destruct t as [H3' H3'']. clear Heqt.
+    assert (Hineq : length stk >= length vlist). omega.
     pose (btest := compile_bexp_correct b C stk pc vlist false
-                                        (length (code_ifso) + 1) Ct).
-    
-    destruct H1 as [H1' H1].
+                                        (length (code_ifso) + 1) Hineq Ct).
+    inversion H1. subst. rename H8 into H1'. clear H1. rename H9 into H1.
     destruct (IHceval C stk _ _ H1' C1 H3) as [stk' [ih ih']].
     
     eexists. split.
@@ -1180,11 +685,13 @@ Proof.
                             (compile_com (Datatypes.length stk) vlist c1)). {eauto with codeseq. }
     assert (C2: codeseq_at C (pc + length code_test + length code_ifso + 1) code_ifnot).
     { eauto with codeseq. }
-    
+
+    remember H3 as t. destruct t as [H3' H3'']. clear Heqt.
+    assert (Hineq : length stk >= length vlist). omega.
     pose (btest := compile_bexp_correct b C stk pc vlist false
-                                        (length (code_ifso) + 1) Ct).
+                                        (length (code_ifso) + 1) Hineq Ct).
     
-    destruct H1 as [H1' H1].
+    inversion H1. subst. rename H8 into H1'. clear H1. rename H9 into H1.
     destruct (IHceval C stk _ _ H1 C2 H3) as [stk' [ih ih']].
 
     eexists. split.
@@ -1205,8 +712,11 @@ Proof.
     assert (Ct : codeseq_at C pc (compile_bexp (Datatypes.length stk) vlist b false
                                                (Datatypes.length code_body + 1))).
     { eauto with codeseq. }
+
+    remember H2 as t. destruct t as [H2' H2'']. clear Heqt.
+    assert (Hineq : length stk >= length vlist). omega.
     
-    pose (jump:= compile_bexp_correct  _ _ _ _ _ _ _ Ct).
+    pose (jump:= compile_bexp_correct  _ _ _ _ _ _ _ Hineq Ct).
     rewrite <- (agree_beval _ _ _ b H2) in jump.
     eexists.
     split. 2 : apply H2.
@@ -1225,14 +735,19 @@ Proof.
     assert (Ct : codeseq_at C pc (compile_bexp (Datatypes.length stk) vlist b false
                                                (Datatypes.length code_body + 1))).
     { eauto with codeseq. }
+
     
-    pose (jump:= compile_bexp_correct  _ _ _ _ _ _ _ Ct).
+    remember H4 as t. destruct t as [H4' H4'']. clear Heqt.
+    assert (Hineq : length stk >= length vlist). omega.
+    
+    pose (jump:= compile_bexp_correct  _ _ _ _ _ _ _ Hineq Ct).
+
     rewrite <- (agree_beval _ _ _ b H4) in jump.
     simpl. fold code_body code_test.
-    simpl in H2.
+    inversion H2. subst. rename H2 into H2o. rename H8 into H2.
     destruct (IHceval1 C stk vlist _ H2 Cb H4) as [stk' [ihb ihb']]. 
     assert (V: varlist_contains_all (WHILE b DO c END) vlist).
-    {simpl. auto. }
+    {auto. }
 
     assert (L : length stk' = length stk).
     { destruct H4. destruct ihb'. omega. }          
@@ -1253,3 +768,26 @@ Proof.
     apply ihc.
   }
 Qed.
+
+
+(*)
+Lemma compile_program_correct_terminating:
+  forall (c : com) (st': state),
+    c / empty_state \\ st' ->
+    exists vlist stk',
+      (star (transition (compile_program c))
+            (0, []) (length (compile_program c), stk')
+      /\ agree vlist stk' st').
+Proof.
+  intros.
+  set (vlist := gen_vlist c []) in *.
+  set (C := compile_program c).
+  assert (H1: varlist_contains_all c vlist ).
+  { unfold vlist. apply gen_vlist_contains_all.  }
+  exists vlist. unfold compile_program. fold vlist.
+
+  pose (P := compile_com_correct_terminating c empty_state st' H C []
+                                             vlist 0 ).
+  unfold C, compile_program.
+  eapply compile_com_correct_terminating.
+*)
