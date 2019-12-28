@@ -7,6 +7,7 @@ From StorelessMachine Require Import Sequences.
 From StorelessMachine Require Import Maps.
 From StorelessMachine Require Import Imp.
 From StorelessMachine Require Import Facts.
+Import ListNotations.
 Require Import Omega.
 
 Ltac normalize :=
@@ -104,6 +105,10 @@ Fixpoint initialize_vars (l : varlist): code :=
   | v :: l' => (Iconst O) :: initialize_vars l'
   end.
 
+
+Theorem length_initialize_vars : forall l,
+    length (initialize_vars l) = length l.
+Proof. induction l; simpl; auto. Qed.
 
 Fixpoint zerostk_of_len (n: nat) : stack :=
   match n with | O => nil | S n' => O :: zerostk_of_len n' end.
@@ -523,13 +528,6 @@ Proof.
 Qed.
 
 
-Definition mach_terminates (C: code) (stk_init stk_fin: stack) :=
-  exists pc,
-  code_at C pc = Some Ihalt /\
-  star (transition C) (0, stk_init) (pc, stk_fin).
-
-
-
 Lemma compile_com_correct_terminating:
   forall (c : com) (st st': state),
     c / st \\ st' ->
@@ -561,19 +559,16 @@ Proof.
     split.
     {
       eapply star_trans. apply compile_aexp_correct.
-      Search "ge".
       assert (lenIneq : length stk >= length vlist). omega.
       apply lenIneq.
       eauto with codeseq.
       apply star_one. normalize. eapply trans_set. eauto with codeseq.
       rewrite H2. rewrite Nat.sub_diag. simpl.
-      Search "aeval".
       rewrite <- (agree_aeval _ _ _ a1 ag). rewrite H. apply Nstk.
     }
     {
       
       
-      Search "set_".
       assert (f: length stk' = length vlist).
       {
         rewrite <- H2.
@@ -586,15 +581,12 @@ Proof.
         destruct (H2' i) as [h2 h2'].
         destruct (beq_id x i) eqn:E. try apply beq_id_true_iff in E. 
         + rewrite <- E in H3. rewrite H0 in H3. inversion H3. rewrite <- H5.
-          Search "get_set".
           eapply get_set_eq. rewrite f. rewrite Nat.sub_diag. simpl.
           apply Nstk.
         + rewrite f. rewrite H2 in h2.
-          Search "get_other".
           rewrite <- (h2 n0 H3).
           eapply get_other_set. apply Nstk.
           rewrite Nat.sub_diag. simpl. apply beq_id_false_iff in E.
-          Search "find".
           destruct (find_inj2 _ _ _ _ _ H0 H3) as [contra contra']. auto.
       - intros. destruct (H2' i) as [h2 h2'].
         unfold t_update.
@@ -654,7 +646,6 @@ Proof.
     destruct (IHceval C stk _ _ H1' C1 H3) as [stk' [ih ih']].
     
     eexists. split.
-    Check agree_beval.
     - eapply star_trans. apply btest. rewrite <- (agree_beval _ _ _ b H3). rewrite H. simpl.
       fold code_ifso code_ifnot code_test in ih |- *. normalize.
       eapply star_trans. apply ih.
@@ -691,7 +682,6 @@ Proof.
     destruct (IHceval C stk _ _ H1 C2 H3) as [stk' [ih ih']].
 
     eexists. split.
-    Check agree_beval.
     - eapply star_trans. apply btest. rewrite <- (agree_beval _ _ _ b H3). rewrite H. simpl.
       fold code_ifso code_ifnot code_test in ih |- *. normalize.
       rewrite <- Nat.add_1_l with (length code_ifnot). normalize. apply ih.
@@ -766,24 +756,95 @@ Proof.
 Qed.
 
 
-(*)
-Lemma compile_program_correct_terminating:
-  forall (c : com) (st': state),
-    c / empty_state \\ st' ->
-    exists vlist stk',
-      (star (transition (compile_program c))
-            (0, []) (length (compile_program c), stk')
-      /\ agree vlist stk' st').
+Theorem initialize_vars_comm: forall vlist,
+    ( Iconst 0 ):: (initialize_vars vlist) = (initialize_vars vlist) ++ [ Iconst 0 ].
+Proof.
+  induction vlist.
+  - reflexivity.
+  - simpl. rewrite IHvlist. reflexivity.
+Qed.
+
+  
+Theorem initialize_correct : forall C vlist pc,
+    codeseq_at C pc (initialize_vars vlist) ->
+    exists stk,
+      star (transition C) (pc, nil) (pc + length vlist, stk)
+      /\ agree vlist stk empty_state.
+Proof.
+  induction vlist.
+  {
+    intros. simpl. normalize. eexists.
+    split. apply star_refl.
+    split; simpl; auto.
+    intros. split. intros. discriminate.
+    intros. cbv delta. reflexivity.
+  }
+  {
+    simpl in *. intros.
+    destruct (IHvlist pc). rewrite initialize_vars_comm in H.
+    eauto with codeseq. destruct H0.
+    eexists. split.
+    - eapply star_trans. apply H0.
+      assert (pc + S (length vlist) = (pc + length vlist) + 1). omega.
+      rewrite H2. apply star_one. apply trans_const.
+      rewrite initialize_vars_comm in H.
+      assert (forall vlist, length vlist = length (initialize_vars vlist)).
+      { intros v. induction v; simpl; auto. }
+      rewrite H3.  eauto with codeseq.
+    - destruct H1. split. simpl. auto. intros. split;
+      destruct i;
+        destruct (if string_dec a s then true else false) eqn:E; simpl; rewrite E; intros.
+        * inversion H3. rewrite H5. rewrite H1.
+          rewrite Nat.sub_diag. simpl. rewrite <- H5. unfold empty_state.
+          unfold t_empty. reflexivity.
+        * rewrite H1. rewrite Nat.sub_diag. simpl. destruct (find s vlist) eqn:E'.
+          pose (ih := H2 (Id s)). destruct ih. rewrite H1 in *.
+          rewrite Nat.sub_diag in *. simpl in *.
+          { destruct n. cbv delta. simpl. reflexivity.
+            apply H2. inversion H3. rewrite <- H7. assumption. 
+          }
+          discriminate.
+        * discriminate.
+        * cbv delta. reflexivity.
+  }
+Qed.
+
+
+Definition mach_terminates (C: code) (stk_init stk_fin: stack) :=
+  exists pc,
+  code_at C pc = Some Ihalt /\
+  star (transition C) (0, stk_init) (pc, stk_fin).
+
+
+Theorem compile_program_correct_terminating:
+  forall c st,
+  c / empty_state \\ st ->
+  exists stk,
+     mach_terminates (compile_program c) nil stk
+  /\ agree (gen_vlist c []) stk st.
 Proof.
   intros.
-  set (vlist := gen_vlist c []) in *.
-  set (C := compile_program c).
-  assert (H1: varlist_contains_all c vlist ).
-  { unfold vlist. apply gen_vlist_contains_all.  }
-  exists vlist. unfold compile_program. fold vlist.
+  set (C := compile_program c). unfold compile_program in C.
+  assert (C0: codeseq_at ([]++C++[]) 0 C). {constructor. reflexivity. }
+  rewrite app_nil_r in C0. simpl in C0.                                           
+  pose (C1 := codeseq_at_app_left _ 0 _ _ C0).
+  destruct (initialize_correct _ _ _ C1) as [stk0 [H1 [H2 H3]]].
+  pose (CC := compile_com_correct_terminating _ _ _ H C stk0 (gen_vlist c [])
+                                              (length ( initialize_vars (gen_vlist c [])))).
+  destruct CC as [stk' [H4 H5]].
+  apply gen_vlist_contains_all.
+  rewrite H2. unfold C. pose (h := codeseq_at_app_right _ _ _ _ C0).
+  apply codeseq_at_app_left in h. apply h.
+  split; assumption.
+  rewrite length_initialize_vars in H4. rewrite <- H2 in *.
+  simpl. destruct H5. eauto with codeseq.
 
-  pose (P := compile_com_correct_terminating c empty_state st' H C []
-                                             vlist 0 ).
-  unfold C, compile_program.
-  eapply compile_com_correct_terminating.
-*)
+  eexists. split. unfold mach_terminates.
+  + eexists. split. eauto with codeseq.
+    eapply star_trans. apply H1.
+    normalize2. rewrite length_initialize_vars. rewrite <- H2. apply H4.
+  + split; auto.
+Qed.
+
+
+(* and its FINALLY correct! *)
